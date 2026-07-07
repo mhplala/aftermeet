@@ -49,6 +49,7 @@ struct RootView: View {
         case .followup: FollowupScreen()
         case .weekly:   WeeklyScreen()
         case .daily:    DailyScreen()
+        case .settings: SettingsScreen()
         }
     }
 }

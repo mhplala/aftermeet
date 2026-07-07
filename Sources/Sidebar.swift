@@ -35,6 +35,8 @@ struct Sidebar: View {
                     active: store.screen == .weekly) { store.go(.weekly) }
 
             group("账户")
+            NavItem(icon: "gearshape", label: "设置",
+                    active: store.screen == .settings) { store.go(.settings) }
             NavItem(icon: "sparkles", label: "接入引导", active: false) {
                 store.obStep = 0
                 store.showOnboarding = true

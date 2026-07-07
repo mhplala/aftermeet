@@ -70,44 +70,85 @@ struct CalendarScreen: View {
         let events: [Lark.CalEvent]
     }
 
-    private var days: [DayGroup] {
+    /// 今天在最前，然后是未来（升序）；过去 7 天弱化收尾（降序，最近的在前）。
+    private func grouped() -> (today: DayGroup?, future: [DayGroup], past: [DayGroup]) {
         let cal = Calendar.current
         let df = DateFormatter(); df.locale = Locale(identifier: "zh_CN"); df.dateFormat = "M月d日 EEEE"
-        var order: [Date] = []
         var map: [Date: [Lark.CalEvent]] = [:]
         for ev in events.sorted(by: { $0.start < $1.start }) {
-            let day = cal.startOfDay(for: ev.start)
-            if map[day] == nil { order.append(day) }
-            map[day, default: []].append(ev)
+            map[cal.startOfDay(for: ev.start), default: []].append(ev)
         }
-        return order.map { day in
+        let todayKey = cal.startOfDay(for: Date())
+        func group(_ day: Date) -> DayGroup {
             let today = cal.isDateInToday(day)
             let prefix = today ? "今天 · " : (cal.isDateInYesterday(day) ? "昨天 · " : (cal.isDateInTomorrow(day) ? "明天 · " : ""))
             return DayGroup(id: "\(day.timeIntervalSince1970)", label: prefix + df.string(from: day),
                             isToday: today, events: map[day] ?? [])
         }
+        let today = map[todayKey] != nil ? group(todayKey) : nil
+        let future = map.keys.filter { $0 > todayKey }.sorted().map(group)
+        let past = map.keys.filter { $0 < todayKey }.sorted(by: >).map(group)
+        return (today, future, past)
     }
 
+    @ViewBuilder
     private var daysList: some View {
-        ForEach(days) { day in
-            HStack(spacing: 7) {
-                Text(day.label)
-                    .font(Theme.mono(11, .semibold))
-                    .foregroundColor(day.isToday ? Theme.blue700 : Theme.inkPrimary)
-                if day.isToday {
-                    Circle().fill(Theme.blue500).frame(width: 5, height: 5)
-                }
+        let g = grouped()
+
+        if let today = g.today {
+            dayHeader(today)
+            dayCard(today, highlight: true)
+        } else {
+            dayHeader(DayGroup(id: "today-empty", label: "今天", isToday: true, events: []))
+            Card(padding: 0) {
+                Text("今天没有日程").font(Theme.ui(13)).foregroundColor(Theme.inkTertiary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 26)
+            }
+        }
+
+        ForEach(g.future) { day in
+            dayHeader(day)
+            dayCard(day, highlight: false)
+        }
+
+        if !g.past.isEmpty {
+            Text("过去 7 天")
+                .font(Theme.mono(10, .semibold)).tracking(1.0).textCase(.uppercase)
+                .foregroundColor(Theme.inkMuted)
+                .padding(.top, 26).padding(.bottom, 2)
+            ForEach(g.past) { day in
+                dayHeader(day)
+                dayCard(day, highlight: false).opacity(0.75)
+            }
+        }
+    }
+
+    private func dayHeader(_ day: DayGroup) -> some View {
+        HStack(spacing: 7) {
+            Text(day.label)
+                .font(Theme.mono(11, .semibold))
+                .foregroundColor(day.isToday ? Theme.blue700 : Theme.inkPrimary)
+            if day.isToday { Circle().fill(Theme.blue500).frame(width: 5, height: 5) }
+            if !day.events.isEmpty {
                 Text("\(day.events.count) 场").font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
             }
-            .padding(.top, 18).padding(.bottom, 8)
+        }
+        .padding(.top, 18).padding(.bottom, 8)
+    }
 
-            Card(padding: 0) {
-                VStack(spacing: 0) {
-                    ForEach(Array(day.events.enumerated()), id: \.offset) { idx, ev in
-                        eventRow(ev, last: idx == day.events.count - 1)
-                    }
+    private func dayCard(_ day: DayGroup, highlight: Bool) -> some View {
+        Card(padding: 0) {
+            VStack(spacing: 0) {
+                ForEach(Array(day.events.enumerated()), id: \.offset) { idx, ev in
+                    eventRow(ev, last: idx == day.events.count - 1)
                 }
-                .padding(.horizontal, 14).padding(.vertical, 3)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 3)
+        }
+        .overlay {
+            if highlight {
+                RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
+                    .strokeBorder(Theme.blue500.opacity(0.35), lineWidth: 1.5)
             }
         }
     }
@@ -153,6 +194,9 @@ struct CalendarScreen: View {
                         .font(Theme.ui(13.5, .medium)).foregroundColor(Theme.inkPrimary)
                         .lineLimit(1)
                     Spacer()
+                    if ev.start <= Date() && Date() < ev.end {
+                        Pill(text: "进行中", bg: Theme.danger50, fg: Theme.danger500, size: 10.5)
+                    }
                     switch kind {
                     case .note:
                         Pill(text: "已有纪要", bg: Theme.green50, fg: Theme.green700, size: 10.5)

@@ -3,7 +3,7 @@ import Combine
 
 // MARK: - Enums
 
-enum Screen { case home, library, calendar, detail, todos, followup, weekly, daily }
+enum Screen { case home, library, calendar, detail, todos, followup, weekly, daily, settings }
 enum TodoFilter { case all, open, overdue, done }
 enum DetailStatus { case pending, unclaimed, confirmed }
 enum CrossStatus { case overdue, doing, done }
@@ -232,6 +232,7 @@ final class AppStore: ObservableObject {
         switch UserDefaults.standard.string(forKey: "screen") {
         case "library":  screen = .library
         case "calendar": screen = .calendar
+        case "settings": screen = .settings
         case "detail":   screen = .detail
         case "todos":    screen = .todos
         case "followup": screen = .followup

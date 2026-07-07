@@ -6,8 +6,10 @@ enum Whisper {
     static let cli = "/opt/homebrew/bin/whisper-cli"
     // ggml-medium-q5_0 (multilingual, quantized) — better zh accuracy, fast enough resident.
     // Override via UserDefaults "whisperModel".
-    static let model = UserDefaults.standard.string(forKey: "whisperModel")
-        ?? "/Users/steve/Dev/clip/work/models/ggml-medium-q5_0.bin"
+    static var model: String {
+        UserDefaults.standard.string(forKey: "whisperModel")
+            ?? "/Users/steve/Dev/clip/work/models/ggml-medium-q5_0.bin"
+    }
 
     static func available() -> Bool {
         FileManager.default.isExecutableFile(atPath: cli) && FileManager.default.fileExists(atPath: model)
