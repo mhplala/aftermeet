@@ -1,6 +1,7 @@
 # 会后秘书 AfterMeet — macOS app
 
-原生 SwiftUI 实现，从 Claude Design 的 `会后秘书 AfterMeet.dc.html` 落地。桌面端效率工具观（Linear/Notion 风），绿色为「闭环 / 完成」语义主色。
+原生 SwiftUI。玻璃拟态视觉（光晕背景 + 磨砂框架 + 纯白工作区），冷墨 + 闭环绿。
+交互稿：`claude.ai/code/artifact/505d1ff5-005a-4383-a9b5-b35246aadb3f`（mock 可点）。
 
 ## 跑起来
 
@@ -9,69 +10,49 @@
 open .build/Build/Products/Debug/AfterMeet.app
 ```
 
-或直接在 Xcode 打开：`xcodegen generate && open AfterMeet.xcodeproj`。
-
 要求：Xcode 26 / Swift 6.x（语言模式按 Swift 5 编译）、macOS 14+。
 
-## 六个页面
+## 结构（目录 6 项 + 常驻录制条）
 
-| 页面 | 文件 | 说明 |
+| 入口 | 文件 | 说明 |
 |---|---|---|
-| 概览 | `HomeScreen.swift` | 问候、4 张指标卡、近期纪要 / 今天该跟的、追问横幅 |
-| 会议纪要 | `DetailScreen.swift` | 折叠区块（决策/待办/分歧/逐字稿）+ 底部固定操作条 |
-| 待办中心 | `TodosScreen.swift` | 跨会议任务、筛选、勾选改闭环率 |
-| 会前追问 | `FollowupScreen.swift` | 进度对比卡、完成/未动、发到群 |
-| 周报 | `WeeklyScreen.swift` | 指标卡 + 闭环率走势折线图（SwiftUI Path）+ 拖延 Top 5 |
-| 接入引导 | `OnboardingView.swift` | 4 步授权引导（关键步：开启智能纪要） |
+| 录制条（顶栏常驻） | `RecStrip.swift` | 五态：空闲/检测到会议/录制中/整理中/✓完成（点击才跳详情，不抢页面）；面板含起名、日程建议、实时转写 |
+| 概览 | `HomeScreen.swift` | 动态问候（真名 via lark-cli）、指标卡、近期 5 场、今天该跟的、追问横幅（真实 recurringCard） |
+| 会议库 | `LibraryScreen.swift` | 所有会议按天分组；tab：纪要 / 原始转写（原转写历史併入） |
+| 会议纪要（详情） | `DetailScreen.swift` | 生成式积木 report + 待办确认 + 问答；返回（⌘[）+ ‹› 前后切换（到头禁用） |
+| 待办中心 | `TodosScreen.swift` | 跨会议任务、筛选、逾期真实计算（due 过期→逾期） |
+| 会前追问 | `FollowupScreen.swift` | 同名会议重复出现 → 上一场待办对比卡，可发群 |
+| 每日综述 / 周报 | `DailyScreen/WeeklyScreen` | 按天 digest；周报台账一键复制 Markdown |
 
-## 结构
+导航带历史栈（`AppStore.go/goBack`），面包屑只表达归属，返回永远回来路。
 
-- `Theme.swift` — 设计 token（颜色 / 圆角 / 字体 / 阴影），从 `.dc.html` 的 `:root` 1:1 移植
-- `Models.swift` — 数据类型、样例数据、`AppStore`（状态与交互逻辑）
-- `Components.swift` — Card / StatCard / Pill / Avatar / Overline 等共享件
-- 交互全部是真状态：确认/认领待办、勾选、筛选、折叠、Toast、Onboarding 步进
+- `Theme.swift` — 新 token（冷墨 #1b1d2a / 闭环绿 #0f9d63 / 玻璃渐变）+ `AmbientBackground` 光晕
+- `Models.swift` — `AppStore`：数据、导航栈、录制态、搜索、通知
+- `NoteBlocks.swift` — 生成式纪要渲染器（summary/stats/beforeAfter/keyPoints/decisions/disputes/timeline/quote/nextAgenda）
+- `Lark.swift` — lark-cli 桥：建任务/搜人/搜群/发消息（用户身份，app 不落凭证）
+- `FeishuSync.swift` — 会后自动同步：15 分钟轮询 vc +search → notes → docs +fetch → 豆包提炼 → meetings.json
+- 设计禁用：斜体、左侧 accent 竖条、蓝紫渐变
 
-## 接真实数据
+## 真实链路（已接）
 
-数据走"文件接缝":`sync.sh`(后端替身)把真实飞书会议提炼成 JSON,app 读它。app 不直接调 lark-cli(避开 GUI 的 PATH 问题),将来 ECS 常驻 daemon 写同一份 store 即可平滑替换。
-
-```bash
-SIKU_TOKEN=<siku-proxy access token> ./sync.sh 3
-# 管线：vc +search（会议）→ vc +notes（逐字稿 token）→ docs +fetch（逐字稿）
-#      → 豆包/siku-proxy 按固定 schema 提炼 → 写 ~/Library/Application Support/AfterMeet/meetings.json
-```
-
-- app 启动时 `RealData.load()` 读该文件;有真数据就渲染真会议(详情页 + 概览近期列表带「真实数据」标),否则回退到样例的「周三产品评审会」。
-- 提炼结构 1:1 对应 `Decision`/`DetailTodo`/`Dispute`;`confidence:low` 或无 owner 的待办自动落「待认领」(宁可多问不可派错)。
-- **逐字稿前提**:会议须是飞书 VC 且开了智能纪要/录制,且你是参会者(否则 121005)。实测最近 15 场只有 1 场拿得到——覆盖率是真实瓶颈,对应 onboarding「默认开启智能纪要」那步。
-
-### 网络注意
-
-`zhiwenai.cc` 的 TLS 在国内会被 SNI reset。`sync.sh` 直连 IP `14.103.38.223` + `Host` 头绕过。根治:Clash 给该域名/IP 加 DIRECT 规则(走 profile 合并文件)。
-
-## 字体说明
-
-设计稿用 Inter Tight + JetBrains Mono；当前用系统 SF Pro / SF Mono（设计稿自身的 fallback）。
-要 1:1 还原，把字体文件丢进 bundle，改 `Theme.ui/display/mono` 三个 helper 即可。
+- **待办确认/认领 → 真建飞书任务**（`task +create`，姓名精确唯一匹配才指派；task-links.json 防重复建卡）
+- **转发到群 / 追问卡发群**：`im +chat-search` 选群 → `im +messages-send --markdown`。**缺 scope**：需一次
+  `lark-cli auth login --scope "im:message.send_as_user im:message"`（app 内会提示）
+- **飞书同步**：自动轮询 + 侧栏「立即同步」；事件推送 `vc.note.generated_v1` 需在开放平台控制台订阅后才可替代轮询
+- **Siku 云**：设备 token（`siku-dev-<uuid>` + X-Siku-App）自动登记，每日 500 万 token 免费额度，用户零配置
+- 本地转写链路不变：截系统音频 → Whisper 端上转写 → 豆包生成式提炼（音频不出网）
 
 ## 数据真实性原则
 
-有真数据(meetings.json 存在)时,**全部由真数据驱动,不留假数字**：
+有真数据（meetings.json / live-meetings.json 非空）时全部真数据驱动；样例（周三产品评审会）只做零数据演示兜底，
+且演示模式下确认待办不建真实任务（toast 注明）。跨周趋势攒够历史才出图，不编造。
 
-- 详情页、概览近期列表、概览指标卡、今天该跟的、待办中心 → 从真会议算
-- 周报趋势 / 拖延 Top 5、会前追问 → 依赖跨会历史,显诚实空状态(「攒数据中」),不编造
-- 样例数据(周三产品评审会等)**只在一条真数据都没同步时**作为演示兜底
+## 调试
 
-判断开关:`store.usingRealData`(= meetings.json 非空)。
+`open AfterMeet.app --args -screen library`（library/detail/todos/followup/weekly/daily，`-onboarding YES`）
 
-## 会后链路的触发
+## 已知边界
 
-- **现在**:手动跑 `sync.sh`(全量扫,适合补历史)
-- **设计**:常驻 daemon 跑 `lark-cli event consume vc.note.generated_v1` —— 飞书在纪要生成时**推送**(NDJSON 长连接,非轮询),daemon 收到 → 抽 meeting_id → 跑提炼 → 写 JSON → app 自动刷新 = 会后 5 分钟自动送达
-
-## 已知边界（当前）
-
-- 待办「确认/认领」目前只改本地状态,尚未回写飞书任务(`task` create 待接,需补 task/im 写权限)
-- daemon 未接(现在手动 sync);跨会议历史聚合(周报趋势/会前追问)等 daemon 累积后才有数据
-- 搜索框、铃铛为视觉占位
-- 启动参数调试：`open AfterMeet.app --args -screen detail`（或 todos/followup/weekly，`-onboarding YES`）
+- im 发送 scope 未授权前，「转发到群」走复制兜底
+- 周报趋势图 / 拖延 Top 5 需跨周历史（真数据模式显示诚实空态）
+- `sync.sh` 保留作为手动补历史的后备管线（app 内轮询已覆盖日常）
