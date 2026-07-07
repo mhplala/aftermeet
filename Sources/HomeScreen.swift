@@ -255,19 +255,27 @@ struct HomeScreen: View {
     // MARK: followup banner
 
     private var followupBanner: some View {
-        let card = store.recurringCard
-        let title = card.map { "「\($0.title)」即将再次召开" }
-            ?? "下周二的站会前，有一张进度追问卡待确认"
+        let cards = store.recurringCards
+        let card = cards.first
+        let title: String = {
+            guard let c = card else { return "下周二的站会前，有一张进度追问卡待确认" }
+            let when = c.upcomingLabel.map { "将于 \($0) 举行" } ?? "即将再次召开"
+            return cards.count > 1 ? "「\(c.title)」\(when)，另有 \(cards.count - 1) 场周期会议" : "「\(c.title)」\(when)"
+        }()
         let sub: String = {
             guard let c = card else { return "上次 6 条待办：4 完成、2 未动 —— 要不要公开点名？" }
             let done = c.items.filter { $0.done }.count
             return "上次 \(c.items.count) 条待办：\(done) 项已完成、\(c.items.count - done) 项未完成，进度汇总已就绪。"
         }()
         return Button { store.go(.followup) } label: {
-            HStack(spacing: 16) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundColor(Theme.green500)
+            HStack(spacing: 15) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
+                        .fill(Theme.green50).frame(width: 38, height: 38)
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundColor(Theme.green700)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(Theme.display(15.5, .medium))
@@ -280,12 +288,13 @@ struct HomeScreen: View {
                 Spacer()
                 Text("查看 →")
                     .font(Theme.ui(12.5, .semibold))
-                    .foregroundColor(Theme.inkPrimary)
+                    .foregroundColor(Theme.blue500)
             }
-            .padding(.horizontal, 22).padding(.vertical, 17)
-            .background(Theme.warmWhite2)
+            .padding(.horizontal, 20).padding(.vertical, 15)
+            .background(Theme.white)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
             .hairline(Theme.borderWhisper, radius: Theme.rLG)
+            .whisperShadow()
         }
         .buttonStyle(.plain)
     }

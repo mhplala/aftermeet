@@ -179,7 +179,7 @@ final class AppStore: ObservableObject {
     private var liveDurations: [String: Int] = [:]
 
     // 派生缓存：重活（正则/日期解析/分组）只在数据变化时算一次，不在 body 里跑
-    @Published private(set) var recurringCardCache: RecurringCard? = nil
+    @Published private(set) var recurringCardsCache: [RecurringCard] = []
     @Published private(set) var meetingsByDayCache: [(day: String, items: [MeetingVM])] = []
     @Published private(set) var staleTodosCache: [CrossTodo] = []
     @Published private(set) var maxOverdueDaysCache = 0
@@ -380,7 +380,7 @@ final class AppStore: ObservableObject {
         maxOverdueDaysCache = ctodos.filter { $0.status != .done }
             .compactMap { Self.overdueDays(due: $0.due) }.filter { $0 > 0 }.max() ?? 0
 
-        recurringCardCache = computeRecurringCard()
+        recurringCardsCache = computeRecurringCards()
     }
 
     /// Generate (or reuse cached) the day's digest by synthesizing all its meetings via 豆包.
@@ -708,7 +708,8 @@ final class AppStore: ObservableObject {
     // MARK: - 会前追问（真实模式）：同系列会议再次出现 → 用上一场的待办生成对比卡
 
     struct RecurringCard {
-        let title: String
+        let title: String                  // 系列名（日历日程名或上一场标题）
+        let prevTitle: String              // 上一场会议的标题（勾选进度按它匹配跨会待办）
         let prevMeta: String
         let items: [FollowItem]
         var upcomingLabel: String? = nil   // 日历里下一场的时间（交叉比对命中时有值）
@@ -774,33 +775,41 @@ final class AppStore: ObservableObject {
         return common >= 12 && Double(common) >= 0.7 * Double(min(a.count, b.count))
     }
 
-    var recurringCard: RecurringCard? { recurringCardCache }
+    var recurringCards: [RecurringCard] { recurringCardsCache }
+    var recurringCard: RecurringCard? { recurringCardsCache.first }
 
-    private func computeRecurringCard() -> RecurringCard? {
-        guard usingRealData else { return nil }
+    /// 一天可能有多场周期会议：日历未来 7 天逐个交叉比对，全部命中都出卡（按开始时间排序）。
+    private func computeRecurringCards() -> [RecurringCard] {
+        guard usingRealData else { return [] }
         let normed = meetings.map { AppStore.normalizedTitle($0.title) }   // meetings 已按新→旧
+        var cards: [RecurringCard] = []
+        var usedSeries = Set<String>()
 
-        // 首选：飞书日历交叉比对 —— 未来 7 天有日程，且会议库里有同系列的上一场
-        for ev in upcomingEvents {
+        for ev in upcomingEvents {                                          // 已按时间升序
             let evNorm = AppStore.normalizedTitle(ev.summary)
-            guard let j = meetings.indices.first(where: { AppStore.sameSeries(evNorm, normed[$0]) })
+            guard !usedSeries.contains(evNorm),
+                  let j = meetings.indices.first(where: { AppStore.sameSeries(evNorm, normed[$0]) })
             else { continue }
             let prev = meetings[j]
             let items = followItems(from: prev)
             guard !items.isEmpty else { continue }
-            return RecurringCard(title: ev.summary, prevMeta: prev.recentMeta,
-                                 items: items, upcomingLabel: ev.dateLabel, upcomingDate: ev.start)
+            usedSeries.insert(evNorm)
+            cards.append(RecurringCard(title: ev.summary, prevTitle: prev.title, prevMeta: prev.recentMeta,
+                                       items: items, upcomingLabel: ev.dateLabel, upcomingDate: ev.start))
+            if cards.count >= 5 { break }
         }
+        if !cards.isEmpty { return cards }
 
-        // 兜底：库内两场同系列（严格匹配）
+        // 兜底：库内两场同系列（严格匹配），只出一张
         for i in meetings.indices {
             guard let j = meetings.indices.first(where: { $0 > i && AppStore.sameSeries(normed[i], normed[$0]) })
             else { continue }
             let items = followItems(from: meetings[j])
             guard !items.isEmpty else { continue }
-            return RecurringCard(title: meetings[i].title, prevMeta: meetings[j].recentMeta, items: items)
+            return [RecurringCard(title: meetings[i].title, prevTitle: meetings[j].title,
+                                  prevMeta: meetings[j].recentMeta, items: items)]
         }
-        return nil
+        return []
     }
 
     private func followItems(from prev: MeetingVM) -> [FollowItem] {
