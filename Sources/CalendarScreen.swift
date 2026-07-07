@@ -8,6 +8,7 @@ struct CalendarScreen: View {
     private var loading: Bool { store.calLoading && store.calEvents.isEmpty }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 header
@@ -34,7 +35,14 @@ struct CalendarScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }
-        .onAppear { store.loadCalendar() }   // TTL 15 分钟内直接用缓存
+        .onAppear {
+            store.loadCalendar()             // TTL 15 分钟内直接用缓存
+            // 时间严格升序，打开时直接停在「今天」——往上翻过去，往下翻未来
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                proxy.scrollTo("today", anchor: .top)
+            }
+        }
+        }
     }
 
     private var header: some View {
@@ -85,8 +93,8 @@ struct CalendarScreen: View {
         let events: [Lark.CalEvent]
     }
 
-    /// 今天在最前，然后是未来（升序）；过去 7 天弱化收尾（降序，最近的在前）。
-    private func grouped() -> (today: DayGroup?, future: [DayGroup], past: [DayGroup]) {
+    /// 严格时间升序：过去 → 今天 → 未来；今天没日程也插一行占位（滚动锚点）。
+    private func grouped() -> [DayGroup] {
         let cal = Calendar.current
         let df = DateFormatter(); df.locale = Locale(identifier: "zh_CN"); df.dateFormat = "M月d日 EEEE"
         var map: [Date: [Lark.CalEvent]] = [:]
@@ -94,47 +102,34 @@ struct CalendarScreen: View {
             map[cal.startOfDay(for: ev.start), default: []].append(ev)
         }
         let todayKey = cal.startOfDay(for: Date())
-        func group(_ day: Date) -> DayGroup {
+        var keys = Set(map.keys); keys.insert(todayKey)
+        return keys.sorted().map { day in
             let today = cal.isDateInToday(day)
             let prefix = today ? "今天 · " : (cal.isDateInYesterday(day) ? "昨天 · " : (cal.isDateInTomorrow(day) ? "明天 · " : ""))
-            return DayGroup(id: "\(day.timeIntervalSince1970)", label: prefix + df.string(from: day),
+            return DayGroup(id: today ? "today" : "\(day.timeIntervalSince1970)",
+                            label: prefix + df.string(from: day),
                             isToday: today, events: map[day] ?? [])
         }
-        let today = map[todayKey] != nil ? group(todayKey) : nil
-        let future = map.keys.filter { $0 > todayKey }.sorted().map(group)
-        let past = map.keys.filter { $0 < todayKey }.sorted(by: >).map(group)
-        return (today, future, past)
     }
 
     @ViewBuilder
     private var daysList: some View {
-        let g = grouped()
-
-        if let today = g.today {
-            dayHeader(today)
-            dayCard(today, highlight: true)
-        } else {
-            dayHeader(DayGroup(id: "today-empty", label: "今天", isToday: true, events: []))
-            Card(padding: 0) {
-                Text("今天没有日程").font(Theme.ui(13)).foregroundColor(Theme.inkTertiary)
-                    .frame(maxWidth: .infinity).padding(.vertical, 26)
-            }
-        }
-
-        ForEach(g.future) { day in
-            dayHeader(day)
-            dayCard(day, highlight: false)
-        }
-
-        if !g.past.isEmpty {
-            Text("过去 7 天")
-                .font(Theme.mono(10, .semibold)).tracking(1.0).textCase(.uppercase)
-                .foregroundColor(Theme.inkMuted)
-                .padding(.top, 26).padding(.bottom, 2)
-            ForEach(g.past) { day in
+        ForEach(grouped()) { day in
+            VStack(alignment: .leading, spacing: 0) {
                 dayHeader(day)
-                dayCard(day, highlight: false).opacity(0.75)
+                if day.events.isEmpty {
+                    Card(padding: 0) {
+                        Text("今天没有日程").font(Theme.ui(13)).foregroundColor(Theme.inkTertiary)
+                            .frame(maxWidth: .infinity).padding(.vertical, 24)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
+                        .strokeBorder(Theme.blue500.opacity(0.35), lineWidth: 1.5))
+                } else {
+                    dayCard(day, highlight: day.isToday)
+                        .opacity(day.isToday || day.events.first!.start > Date() ? 1 : 0.8)
+                }
             }
+            .id(day.id)
         }
     }
 
