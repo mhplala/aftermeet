@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION="${1:-0.2.0}"
-IDENTITY="Developer ID Application: Stev Wang (UK68KKX58X)"
+# 钥匙串里有两份同名证书（ambiguous），用 SHA-1 指定有效期到 2031 的那份
+IDENTITY="9E96E6F329CAC93BD47EBD01100ABD51C32A4D1B"
 APP_NAME="Aftermeet"
 DIST="dist"
 
