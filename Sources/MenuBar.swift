@@ -94,6 +94,6 @@ struct MenuBarPanel: View {
     private func activateMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.max(by: { $0.frame.width < $1.frame.width })?.makeKeyAndOrderFront(nil)
-        store.go(.live)
+        if store.capture.isCapturing { store.showRecPanel = true }   // 录着呢 → 顺手展开录制面板
     }
 }

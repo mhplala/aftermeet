@@ -4,7 +4,8 @@ import SwiftUI
 /// generative block renderer), plus the list of meetings that fed it.
 struct DailyScreen: View {
     @EnvironmentObject var store: AppStore
-    @State private var day: String = ""
+    // 选中的天放 store（dailyDay）：跳去详情再返回，选择不丢
+    private var day: String { store.dailyDay }
 
     private var days: [(day: String, items: [MeetingVM])] { store.meetingsByDay }
     private var current: [MeetingVM] { days.first { $0.day == day }?.items ?? [] }
@@ -31,7 +32,7 @@ struct DailyScreen: View {
             .padding(32)
         }
         .onAppear {
-            if day.isEmpty { day = days.first?.day ?? "" }
+            if day.isEmpty { store.dailyDay = days.first?.day ?? "" }
             if !day.isEmpty { store.generateDigest(day: day) }
         }
     }
@@ -40,10 +41,10 @@ struct DailyScreen: View {
         VStack(alignment: .leading, spacing: 0) {
             Overline("跨会综合 · 当日全局", tracking: 1.2).padding(.bottom, 8)
             (Text("每日").foregroundColor(Theme.inkPrimary)
-                + Text("综述").foregroundColor(Theme.accent).italic())
+                + Text("综述").foregroundColor(Theme.accent))
                 .font(Theme.display(38, .medium)).tracking(-0.9)
             Text("把一天开的所有会综合成一份 digest —— 今天整体在推什么、跨会的共性、当天所有决策。")
-                .font(Theme.display(15, .regular)).italic()
+                .font(Theme.display(15, .regular))
                 .foregroundColor(Theme.inkSecondary).padding(.top, 8)
         }
     }
@@ -54,7 +55,7 @@ struct DailyScreen: View {
                 ForEach(days, id: \.day) { d in
                     let on = d.day == day
                     Button {
-                        day = d.day
+                        store.dailyDay = d.day
                         store.generateDigest(day: d.day)
                     } label: {
                         HStack(spacing: 6) {

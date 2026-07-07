@@ -18,70 +18,73 @@ extension Color {
     }
 }
 
-// MARK: - Design tokens (ported from the AfterMeet design system)
+// MARK: - Design tokens（玻璃拟态版：冷墨 + 闭环绿；框架玻璃、工作区纯白）
 
 enum Theme {
-    // surfaces
+    // surfaces — 工作区纯白，浅灰全部偏冷
     static let white       = Color(hex: "ffffff")
-    static let warmWhite   = Color(hex: "f6f5f4")
-    static let warmWhite2  = Color(hex: "efeeea")
-    static let paper300    = Color(hex: "e4e2dd")
-    static let pageBg      = Color(hex: "f0efec")
-    static let canvas      = Color(hex: "fbfaf9")
-    static let sidebarBg   = Color(hex: "fdfcfa")
-    static let searchBg    = Color(hex: "fafafa")
+    static let warmWhite   = Color(hex: "f6f7fc")
+    static let warmWhite2  = Color(hex: "eef0f8")
+    static let paper300    = Color(hex: "e2e5f0")
+    static let pageBg      = Color(hex: "f2f3fb")
+    static let canvas      = Color(hex: "ffffff")
+    static let sidebarBg   = Color.white.opacity(0.34)
+    static let searchBg    = Color(hex: "f6f7fc")
 
-    // ink / text
-    static let inkPrimary   = Color.black.opacity(0.95)
-    static let inkSecondary = Color(hex: "615d59")
-    static let inkTertiary  = Color(hex: "87857f")
-    static let inkMuted     = Color(hex: "a39e98")
-    static let ink1000      = Color(hex: "141413")
-    static let ink900       = Color(hex: "1f1f1d")
-    static let ink800       = Color(hex: "31302e")
-    static let ink700       = Color(hex: "4d4c48")
-    static let onDark       = Color(hex: "fafaf8")
-    static let onDarkDim    = Color(hex: "c8c6c0")
+    // ink / text — 冷夜蓝墨
+    static let inkPrimary   = Color(hex: "1b1d2a")
+    static let inkSecondary = Color(hex: "575c70")
+    static let inkTertiary  = Color(hex: "8a8fa4")
+    static let inkMuted     = Color(hex: "abafc2")
+    static let ink1000      = Color(hex: "1b1d2a")
+    static let ink900       = Color(hex: "23263a")
+    static let ink800       = Color(hex: "31354c")
+    static let ink700       = Color(hex: "4a4f68")
+    static let onDark       = Color(hex: "fbfcff")
+    static let onDarkDim    = Color(hex: "ebefff").opacity(0.72)
 
     // blue (info)
-    static let blue50  = Color(hex: "f2f9ff")
-    static let blue100 = Color(hex: "d9ecff")
-    static let blue500 = Color(hex: "0075de")
-    static let blue600 = Color(hex: "005bab")
-    static let blue700 = Color(hex: "003f78")
+    static let blue50  = Color(hex: "eef4ff")
+    static let blue100 = Color(hex: "d9e7ff")
+    static let blue500 = Color(hex: "3f7ef7")
+    static let blue600 = Color(hex: "2f63cc")
+    static let blue700 = Color(hex: "1d4fa8")
 
-    // brand (warm accent)
-    static let brand50  = Color(hex: "fbece2")
-    static let brand300 = Color(hex: "e89a73")
-    static let brand500 = Color(hex: "d06a3a")
-    static let brand700 = Color(hex: "8e3d18")
+    // brand (warm accent, 深度要点等暖橘点缀)
+    static let brand50  = Color(hex: "fbf1e8")
+    static let brand300 = Color(hex: "efb08a")
+    static let brand500 = Color(hex: "e0905a")
+    static let brand700 = Color(hex: "9c5526")
 
     // green / accent (闭环 / 完成)
-    static let green50  = Color(hex: "e6f2ea")
-    static let green500 = Color(hex: "1f7a4c")
-    static let green700 = Color(hex: "0f5131")
-    static let accent        = Color(hex: "1f7a4c")
-    static let accentInk     = Color(hex: "0f5131")
-    static let accentSurface = Color(hex: "e6f2ea")
+    static let green50  = Color(hex: "eaf7f0")
+    static let green500 = Color(hex: "0f9d63")
+    static let green700 = Color(hex: "0a6b45")
+    static let accent        = Color(hex: "0f9d63")
+    static let accentBright  = Color(hex: "12b573")
+    static let accentInk     = Color(hex: "0a6b45")
+    static let accentSurface = Color(hex: "e2f6ec")
+    static let accentGlow    = Color(hex: "35dc96")
 
     // warn / danger
-    static let warn50    = Color(hex: "fbeedb")
-    static let warn500   = Color(hex: "a86a1a")
-    static let danger50  = Color(hex: "f8e3e0")
-    static let danger500 = Color(hex: "b53333")
+    static let warn50    = Color(hex: "fdf3e1")
+    static let warn500   = Color(hex: "b3761c")
+    static let danger50  = Color(hex: "fdecee")
+    static let danger500 = Color(hex: "e0485c")
 
-    // hairlines
-    static let borderWhisper = Color.black.opacity(0.08)
-    static let borderDefault = Color.black.opacity(0.10)
-    static let borderStrong  = Color.black.opacity(0.15)
+    // hairlines — 冷灰蓝
+    static let borderWhisper = Color(hex: "737daa").opacity(0.16)
+    static let borderDefault = Color(hex: "737daa").opacity(0.24)
+    static let borderStrong  = Color(hex: "737daa").opacity(0.34)
+    static let glassBorder   = Color.white.opacity(0.78)
 
     // radii
-    static let rXS: CGFloat = 4
-    static let rSM: CGFloat = 6
-    static let rMD: CGFloat = 8
-    static let rLG: CGFloat = 12
-    static let rXL: CGFloat = 16
-    static let r2XL: CGFloat = 24
+    static let rXS: CGFloat = 5
+    static let rSM: CGFloat = 7
+    static let rMD: CGFloat = 10
+    static let rLG: CGFloat = 16
+    static let rXL: CGFloat = 20
+    static let r2XL: CGFloat = 26
 
     // type — Inter Tight falls back to SF Pro; JetBrains Mono to SF Mono.
     // Centralized so swapping in bundled fonts later is a one-line change.
@@ -94,6 +97,44 @@ enum Theme {
     static func mono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight, design: .monospaced)
     }
+
+    /// 深墨玻璃（侧栏状态卡 / 追问横幅）
+    static var inkGlass: LinearGradient {
+        LinearGradient(colors: [Color(hex: "1e2238").opacity(0.94), Color(hex: "2c3256").opacity(0.90)],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    /// 闭环绿渐变（主按钮）
+    static var greenGrad: LinearGradient {
+        LinearGradient(colors: [Color(hex: "12b573"), Color(hex: "0a8a58")],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    /// 深墨渐变（次主按钮）
+    static var inkGrad: LinearGradient {
+        LinearGradient(colors: [Color(hex: "2a2d40"), Color(hex: "1b1d2a")],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+// MARK: - 背景光晕（浅蓝 / 蜜桃 / 薄荷 / 暖白，缓慢漂移的柔光）
+
+struct AmbientBackground: View {
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            ZStack {
+                Theme.pageBg
+                blob(Color(hex: "b3d2ff"), d: 640).position(x: w * 0.12, y: h * 0.05)
+                blob(Color(hex: "ffe3c4"), d: 560).position(x: w * 0.92, y: h * 0.08)
+                blob(Color(hex: "b5f0d4"), d: 540).position(x: w * 0.18, y: h * 1.02)
+                blob(Color(hex: "ffd8c5"), d: 460).position(x: w * 0.90, y: h * 0.98)
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private func blob(_ c: Color, d: CGFloat) -> some View {
+        Circle().fill(c).frame(width: d, height: d).blur(radius: 95).opacity(0.62)
+    }
 }
 
 // MARK: - Shadow & border helpers
@@ -101,18 +142,22 @@ enum Theme {
 extension View {
     /// Barely-there elevation used on cards.
     func whisperShadow() -> some View {
-        self.shadow(color: .black.opacity(0.04), radius: 9, x: 0, y: 4)
-            .shadow(color: .black.opacity(0.02), radius: 2, x: 0, y: 1)
+        self.shadow(color: Color(hex: "5862a8").opacity(0.08), radius: 11, x: 0, y: 6)
+            .shadow(color: Color(hex: "5862a8").opacity(0.05), radius: 2, x: 0, y: 1)
     }
     /// Medium card elevation.
     func cardShadow() -> some View {
-        self.shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 12)
-            .shadow(color: .black.opacity(0.04), radius: 5, x: 0, y: 4)
+        self.shadow(color: Color(hex: "5862a8").opacity(0.10), radius: 16, x: 0, y: 12)
+            .shadow(color: Color(hex: "5862a8").opacity(0.06), radius: 5, x: 0, y: 4)
     }
     /// Strong popover / floating bar elevation.
     func popShadow() -> some View {
-        self.shadow(color: .black.opacity(0.05), radius: 26, x: 0, y: 20)
-            .shadow(color: .black.opacity(0.04), radius: 12, x: 0, y: 8)
+        self.shadow(color: Color(hex: "5862a8").opacity(0.16), radius: 26, x: 0, y: 18)
+            .shadow(color: Color(hex: "5862a8").opacity(0.08), radius: 10, x: 0, y: 6)
+    }
+    /// 彩色发光（主按钮 / 录制点）
+    func glow(_ color: Color, radius: CGFloat = 14, opacity: Double = 0.35) -> some View {
+        self.shadow(color: color.opacity(opacity), radius: radius, x: 0, y: 5)
     }
     /// Hairline stroke on a rounded rect.
     func hairline(_ color: Color = Theme.borderWhisper, radius: CGFloat, width: CGFloat = 1) -> some View {

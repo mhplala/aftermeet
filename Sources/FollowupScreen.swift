@@ -19,7 +19,7 @@ struct FollowupScreen: View {
                 Text("进度追问卡")
                     .font(Theme.display(36, .medium)).tracking(-0.7).foregroundColor(Theme.inkPrimary)
                 Text(subtitle)
-                    .font(Theme.display(15, .regular)).italic()
+                    .font(Theme.display(15, .regular))
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.top, 8).padding(.bottom, 24)
                     .fixedSize(horizontal: false, vertical: true)

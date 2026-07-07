@@ -51,7 +51,7 @@ struct WeeklyScreen: View {
             VStack(alignment: .leading, spacing: 0) {
                 Overline(weekOverline, tracking: 1.2).padding(.bottom, 8)
                 (Text("本周").foregroundColor(Theme.inkPrimary)
-                    + Text("会议回顾").foregroundColor(Theme.accent).italic())
+                    + Text("会议回顾").foregroundColor(Theme.accent))
                     .font(Theme.display(38, .medium)).tracking(-0.9)
             }
             Spacer()
@@ -110,7 +110,7 @@ struct WeeklyScreen: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("闭环率走势").font(Theme.display(18, .medium)).foregroundColor(Theme.inkPrimary)
                 Text("过去 6 周，待办按期完成的比例。")
-                    .font(Theme.display(13, .regular)).italic()
+                    .font(Theme.display(13, .regular))
                     .foregroundColor(Theme.inkTertiary).padding(.top, 2).padding(.bottom, 20)
                 CloseRateChart()
             }
@@ -122,7 +122,7 @@ struct WeeklyScreen: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("拖延 Top 5").font(Theme.display(18, .medium)).foregroundColor(Theme.inkPrimary)
                 Text("最久未更新的待办。")
-                    .font(Theme.display(13, .regular)).italic()
+                    .font(Theme.display(13, .regular))
                     .foregroundColor(Theme.inkTertiary).padding(.top, 2).padding(.bottom, 16)
                 ForEach(Array(procrastinators.enumerated()), id: \.element.id) { idx, p in
                     VStack(spacing: 0) {

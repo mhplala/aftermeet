@@ -10,34 +10,29 @@ struct Sidebar: View {
 
             logo
                 .padding(.horizontal, 8)
-                .padding(.bottom, 18)
+                .padding(.bottom, 14)
 
             NavItem(icon: "house", label: "概览",
                     active: store.screen == .home) { store.go(.home) }
-            NavItem(icon: "waveform", label: "会中转写",
-                    active: store.screen == .live) { store.go(.live) }
-            NavItem(icon: "clock.arrow.circlepath", label: "转写历史",
-                    active: store.screen == .history) { store.go(.history) }
-            NavItem(icon: "doc.text", label: "会议纪要", badge: "\(store.meetings.count)",
-                    active: store.screen == .detail) { store.go(.detail) }
+
+            group("会议")
+            NavItem(icon: "books.vertical", label: "会议库", badge: "\(store.meetings.count)",
+                    active: store.screen == .library || store.screen == .detail) { store.go(.library) }
+
+            group("跟进")
             NavItem(icon: "checklist", label: "待办中心", badge: "\(store.openCount)",
                     badgeColor: Theme.accent, badgeWeight: .semibold,
                     active: store.screen == .todos) { store.go(.todos) }
             NavItem(icon: "clock.arrow.circlepath", label: "会前追问",
                     active: store.screen == .followup) { store.go(.followup) }
+
+            group("回顾")
             NavItem(icon: "sun.max", label: "每日综述",
                     active: store.screen == .daily) { store.go(.daily) }
             NavItem(icon: "chart.line.uptrend.xyaxis", label: "周报",
                     active: store.screen == .weekly) { store.go(.weekly) }
 
-            Text("账户")
-                .font(Theme.mono(10, .semibold))
-                .tracking(1.0)
-                .foregroundColor(Theme.inkTertiary)
-                .padding(.horizontal, 8)
-                .padding(.top, 18)
-                .padding(.bottom, 4)
-
+            group("账户")
             NavItem(icon: "sparkles", label: "接入引导", active: false) {
                 store.obStep = 0
                 store.showOnboarding = true
@@ -51,26 +46,38 @@ struct Sidebar: View {
         .padding(.bottom, 20)
         .frame(width: 248)
         .frame(maxHeight: .infinity, alignment: .top)
+        .background(.ultraThinMaterial)
         .background(Theme.sidebarBg)
         .overlay(alignment: .trailing) {
             Rectangle().fill(Theme.borderWhisper).frame(width: 1)
         }
     }
 
+    private func group(_ title: String) -> some View {
+        Text(title)
+            .font(Theme.mono(10, .semibold))
+            .tracking(1.1)
+            .foregroundColor(Theme.inkMuted)
+            .padding(.horizontal, 8)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
+    }
+
     private var logo: some View {
         HStack(spacing: 9) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Theme.accent)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Theme.greenGrad)
                     .frame(width: 30, height: 30)
+                    .glow(Theme.accent, radius: 10, opacity: 0.35)
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white)
             }
             VStack(alignment: .leading, spacing: 2) {
                 (Text("会后").foregroundColor(Theme.inkPrimary)
-                    + Text("秘书").foregroundColor(Theme.accent).italic())
-                    .font(Theme.display(18, .medium))
+                    + Text("秘书").foregroundColor(Theme.accent))
+                    .font(Theme.display(18, .semibold))
                     .tracking(-0.3)
                 Text("AFTERMEET")
                     .font(Theme.mono(9, .regular))
@@ -84,8 +91,9 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ZStack {
-                    Circle().fill(Theme.green500.opacity(0.25)).frame(width: 13, height: 13)
-                    Circle().fill(Theme.green500).frame(width: 7, height: 7)
+                    Circle().fill(Theme.accentGlow.opacity(0.22)).frame(width: 13, height: 13)
+                    Circle().fill(Theme.accentGlow).frame(width: 7, height: 7)
+                        .glow(Theme.accentGlow, radius: 6, opacity: 0.8)
                 }
                 Text(store.sync.syncing ? "正在同步飞书会议…" : "秘书在线 · 监听中")
                     .font(Theme.mono(10))
@@ -101,9 +109,10 @@ struct Sidebar: View {
                     Text("立即同步")
                         .font(Theme.mono(10, .semibold))
                         .foregroundColor(Theme.onDark)
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background(Color.white.opacity(0.12))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.14))
                         .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .disabled(store.sync.syncing)
@@ -116,8 +125,11 @@ struct Sidebar: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.ink1000)
+        .background(Theme.inkGlass)
         .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+        .shadow(color: Color(hex: "282e5a").opacity(0.28), radius: 14, x: 0, y: 8)
     }
 }
 
@@ -138,7 +150,7 @@ struct NavItem: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .regular))
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundColor(active ? Theme.inkPrimary : Theme.inkSecondary)
                     .frame(width: 18)
                 Text(label)
@@ -154,7 +166,14 @@ struct NavItem: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+            .overlay {
+                if active {
+                    RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.9), lineWidth: 1)
+                }
+            }
+            .shadow(color: active ? Color(hex: "5862a8").opacity(0.12) : .clear, radius: 6, x: 0, y: 3)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -162,7 +181,7 @@ struct NavItem: View {
     }
 
     private var background: Color {
-        if active { return Color.black.opacity(0.06) }
-        return hover ? Color.black.opacity(0.035) : Color.clear
+        if active { return Color.white.opacity(0.82) }
+        return hover ? Color.white.opacity(0.5) : Color.clear
     }
 }

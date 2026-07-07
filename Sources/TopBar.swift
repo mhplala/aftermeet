@@ -14,8 +14,9 @@ struct TopBar: View {
 
     var body: some View {
         HStack(spacing: 14) {
+            RecStrip()
             search
-                .frame(maxWidth: 380)
+                .frame(maxWidth: 330)
             Spacer()
             Text(todayLabel)
                 .font(Theme.mono(11.5))
@@ -23,11 +24,11 @@ struct TopBar: View {
             bell
             avatar
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, 24)
         .frame(height: 60)
-        .background(Theme.white)
+        .background(.ultraThinMaterial)
+        .background(Color.white.opacity(0.35))
         .overlay(alignment: .bottom) { Hairline() }
-        .overlay(alignment: .topLeading) { results }
         .background {   // ⌘K 聚焦搜索
             Button("") { searchFocused = true }
                 .keyboardShortcut("k", modifiers: .command)
@@ -64,11 +65,12 @@ struct TopBar: View {
                 }.buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 13)
         .padding(.vertical, 7)
-        .background(Theme.searchBg)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-        .hairline(Theme.borderDefault, radius: Theme.rMD)
+        .background(Color.white.opacity(0.55))
+        .clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(Theme.glassBorder, lineWidth: 1))
+        .overlay(alignment: .topLeading) { results.offset(y: 40) }
     }
 
     @ViewBuilder
@@ -100,13 +102,13 @@ struct TopBar: View {
                     }
                 }
             }
-            .frame(width: 380, alignment: .leading)
-            .background(Theme.white)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-            .hairline(Theme.borderDefault, radius: Theme.rMD)
+            .frame(width: 330, alignment: .leading)
+            .background(.ultraThinMaterial)
+            .background(Color.white.opacity(0.75))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.9), lineWidth: 1))
             .popShadow()
-            .padding(.leading, 28)
-            .padding(.top, 52)
         }
     }
 
@@ -122,14 +124,15 @@ struct TopBar: View {
         Button { showBell.toggle() } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "bell")
-                    .font(.system(size: 15, weight: .regular))
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundColor(Theme.inkPrimary.opacity(0.8))
-                    .frame(width: 34, height: 34)
-                    .background(bellHover ? Theme.warmWhite : Theme.white)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-                    .hairline(Theme.borderDefault, radius: Theme.rMD)
+                    .frame(width: 33, height: 33)
+                    .background(bellHover ? Color.white.opacity(0.85) : Color.white.opacity(0.58))
+                    .clipShape(Circle())
+                    .overlay(Circle().strokeBorder(Theme.glassBorder, lineWidth: 1))
                 if !store.notifications.isEmpty {
                     Circle().fill(Theme.danger500).frame(width: 7, height: 7)
+                        .glow(Theme.danger500, radius: 5, opacity: 0.7)
                         .offset(x: -6, y: 7)
                 }
             }
@@ -179,14 +182,13 @@ struct TopBar: View {
 
     private var avatar: some View {
         Text(store.userName.isEmpty ? "…" : store.userInitial)
-            .font(Theme.display(15, .medium))
+            .font(Theme.display(14.5, .medium))
             .foregroundColor(.white)
-            .frame(width: 34, height: 34)
-            .background(
-                LinearGradient(colors: [Color(hex: "1f7a4c"), Color(hex: "3aa873")],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-            )
+            .frame(width: 33, height: 33)
+            .background(Theme.greenGrad)
             .clipShape(Circle())
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.8), lineWidth: 1.5))
+            .glow(Theme.accent, radius: 8, opacity: 0.3)
             .help(store.userName)
     }
 }

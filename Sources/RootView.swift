@@ -11,9 +11,10 @@ struct RootView: View {
                     TopBar()
                         .zIndex(10)      // 搜索结果下拉要压住内容区
                     content
-                        .background(Theme.canvas)
+                        .background(Theme.canvas)   // 工作区纯白
                 }
             }
+            .background(AmbientBackground())        // 光晕只从框架层透出来
 
             if let t = store.toast {
                 ToastView(text: t)
@@ -21,7 +22,6 @@ struct RootView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background(Theme.white)
         .overlay {
             if store.showOnboarding {
                 OnboardingView()
@@ -31,14 +31,18 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.2), value: store.showOnboarding)
         .ignoresSafeArea()
         .task { store.startWatching() }
+        .background {   // ⌘[ 返回
+            Button("") { store.goBack() }
+                .keyboardShortcut("[", modifiers: .command)
+                .opacity(0)
+        }
     }
 
     @ViewBuilder
     private var content: some View {
         switch store.screen {
         case .home:     HomeScreen()
-        case .live:     LiveScreen()
-        case .history:  HistoryScreen()
+        case .library:  LibraryScreen()
         case .detail:   DetailScreen()
         case .todos:    TodosScreen()
         case .followup: FollowupScreen()

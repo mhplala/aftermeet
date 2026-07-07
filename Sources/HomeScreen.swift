@@ -31,7 +31,7 @@ struct HomeScreen: View {
                     recentCard
                     todoCard.frame(width: 360)
                 }
-                if !store.usingRealData {
+                if store.recurringCard != nil || !store.usingRealData {
                     followupBanner.padding(.top, 16)
                 }
             }
@@ -73,23 +73,26 @@ struct HomeScreen: View {
                 Overline(todayOverline, tracking: 1.2).padding(.bottom, 8)
                 (Text(store.userName.isEmpty ? String(greeting.dropLast()) : greeting)
                     .foregroundColor(Theme.inkPrimary)
-                    + Text(store.userName).foregroundColor(Theme.accent).italic()
+                    + Text(store.userName).foregroundColor(Theme.accent)
                     + Text("。").foregroundColor(Theme.inkPrimary))
                     .font(Theme.display(42, .medium))
                     .tracking(-1)
                 Text(subtitle)
-                    .font(Theme.display(16, .regular)).italic()
+                    .font(Theme.display(16, .regular))
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.top, 10)
             }
             Spacer()
-            Button { store.selectMeeting(0) } label: {
-                Text("查看最新纪要")
+            Button {
+                if store.usingRealData { store.selectMeeting(0) } else { store.syncNow() }
+            } label: {
+                Text(store.usingRealData ? "查看最新纪要" : "立即同步飞书")
                     .font(Theme.ui(13, .semibold))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 16).padding(.vertical, 9)
-                    .background(Theme.ink1000)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+                    .padding(.horizontal, 17).padding(.vertical, 9)
+                    .background(Theme.inkGrad)
+                    .clipShape(Capsule())
+                    .glow(Theme.ink1000, radius: 10, opacity: 0.25)
             }
             .buttonStyle(.plain)
         }
@@ -139,16 +142,18 @@ struct HomeScreen: View {
                         Pill(text: "真实数据", bg: Theme.green50, fg: Theme.green700, size: 10.5)
                     }
                     Spacer()
-                    Button { store.selectMeeting(0) } label: {
-                        Text("全部 →").font(Theme.ui(12.5)).foregroundColor(Theme.blue500)
+                    Button { store.go(.library) } label: {
+                        Text("全部 \(store.meetings.count) 场 →")
+                            .font(Theme.ui(12.5)).foregroundColor(Theme.blue500)
                     }.buttonStyle(.plain)
                 }
                 .padding(.bottom, 16)
 
                 if store.usingRealData {
-                    ForEach(Array(store.meetings.enumerated()), id: \.element.id) { idx, mv in
+                    let shown = Array(store.meetings.prefix(5))
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { idx, mv in
                         Button { store.selectMeeting(idx) } label: {
-                            realRow(mv, last: idx == store.meetings.count - 1)
+                            realRow(mv, last: idx == shown.count - 1)
                         }
                         .buttonStyle(.plain)
                     }
@@ -248,16 +253,25 @@ struct HomeScreen: View {
     // MARK: followup banner
 
     private var followupBanner: some View {
-        Button { store.go(.followup) } label: {
+        let card = store.recurringCard
+        let title = card.map { "「\($0.title)」快再开了，上次的待办进度已盘好" }
+            ?? "下周二的站会前，有一张进度追问卡等你拍板"
+        let sub: String = {
+            guard let c = card else { return "上次 6 条待办：4 完成、2 未动 —— 要不要公开点名？" }
+            let done = c.items.filter { $0.done }.count
+            return "上次 \(c.items.count) 条待办：\(done) 完成、\(c.items.count - done) 未动 —— 要不要公开点名，你先过一眼。"
+        }()
+        return Button { store.go(.followup) } label: {
             HStack(spacing: 16) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 21, weight: .regular))
-                    .foregroundColor(Theme.brand300)
+                    .foregroundColor(Theme.accentGlow)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("下周二的站会前，有一张进度追问卡等你拍板")
+                    Text(title)
                         .font(Theme.display(16, .medium))
                         .foregroundColor(Theme.onDark)
-                    Text("上次 6 条待办：4 完成、2 未动 —— 要不要公开点名？")
+                        .lineLimit(1)
+                    Text(sub)
                         .font(Theme.ui(12.5))
                         .foregroundColor(Theme.onDarkDim)
                 }
@@ -267,8 +281,10 @@ struct HomeScreen: View {
                     .foregroundColor(Theme.onDark)
             }
             .padding(.horizontal, 22).padding(.vertical, 18)
-            .background(Theme.ink1000)
+            .background(Theme.inkGlass)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
             .cardShadow()
         }
         .buttonStyle(.plain)

@@ -78,14 +78,14 @@ private struct SummaryBlock: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(Theme.display(16, .regular)).italic()
-            .foregroundColor(Theme.inkSecondary).lineSpacing(5)
+            .font(Theme.display(15.5, .regular))
+            .foregroundColor(Theme.inkSecondary).lineSpacing(6)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 18).padding(.vertical, 14)
+            .padding(.horizontal, 17).padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.warmWhite)
-            .overlay(alignment: .leading) { Rectangle().fill(Theme.accent).frame(width: 2) }
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+            .background(Color(hex: "f4faf7"))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rLG - 2, style: .continuous))
+            .hairline(Theme.accent.opacity(0.14), radius: Theme.rLG - 2)
     }
 }
 
@@ -235,7 +235,7 @@ private struct QuoteBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("“\(text)”")
-                .font(Theme.display(17, .regular)).italic()
+                .font(Theme.display(16, .medium))
                 .foregroundColor(Theme.inkPrimary.opacity(0.9)).lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
             if let w = who, !w.isEmpty {
@@ -243,10 +243,10 @@ private struct QuoteBlock: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20).padding(.vertical, 16)
-        .background(Theme.warmWhite)
-        .overlay(alignment: .leading) { Rectangle().fill(Theme.brand500).frame(width: 2) }
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+        .padding(.horizontal, 19).padding(.vertical, 15)
+        .background(Color(hex: "fbf7f2"))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rLG - 2, style: .continuous))
+        .hairline(Theme.brand500.opacity(0.18), radius: Theme.rLG - 2)
     }
 }
 

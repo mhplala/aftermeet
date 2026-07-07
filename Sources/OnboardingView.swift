@@ -58,7 +58,7 @@ struct OnboardingView: View {
             iconBadge(bg: Theme.accent, fg: .white, symbol: "checkmark", size: 52, radius: 14)
                 .padding(.bottom, 20)
             (Text("你好，我是").foregroundColor(Theme.inkPrimary)
-                + Text("会后秘书").foregroundColor(Theme.accent).italic()
+                + Text("会后秘书").foregroundColor(Theme.accent)
                 + Text("。").foregroundColor(Theme.inkPrimary))
                 .font(Theme.display(28, .medium)).tracking(-0.5).padding(.bottom, 12)
             Text("会议一结束，我就把逐字稿整理成「决策 + 待办 + 责任人」，待办直接落成飞书任务，下次开会前还会主动追问完成情况。\n\n妙记负责记录，我负责闭环。整个过程你不用动手。")

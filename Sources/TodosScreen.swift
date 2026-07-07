@@ -21,7 +21,7 @@ struct TodosScreen: View {
             Text("待办中心")
                 .font(Theme.display(38, .medium)).tracking(-0.9).foregroundColor(Theme.inkPrimary)
             Text("所有会议产生的待办，落在一处。勾掉一条，闭环率就往上走一点。")
-                .font(Theme.display(15, .regular)).italic()
+                .font(Theme.display(15, .regular))
                 .foregroundColor(Theme.inkSecondary).padding(.top, 8)
         }
     }
@@ -92,6 +92,8 @@ struct CrossTodoRow: View {
     @State private var hover = false
 
     private var done: Bool { todo.status == .done }
+    /// 搜索跳转的落点：闪一下这一行
+    private var flashing: Bool { store.flashTodoText == todo.text }
 
     var body: some View {
         Button { store.toggleCtodo(todo.id) } label: {
@@ -120,7 +122,9 @@ struct CrossTodoRow: View {
                         .clipShape(Capsule())
                 }
                 .padding(.horizontal, 22).padding(.vertical, 15)
-                .background(hover ? Color(hex: "faf9f8") : Theme.white)
+                .background(flashing ? Theme.accentSurface
+                            : hover ? Color(hex: "f6f7fc") : Theme.white)
+                .animation(.easeOut(duration: 0.4), value: flashing)
                 .contentShape(Rectangle())
                 if !last { Hairline() }
             }

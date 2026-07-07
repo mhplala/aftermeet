@@ -3,7 +3,7 @@ import Combine
 
 // MARK: - Enums
 
-enum Screen { case home, live, history, detail, todos, followup, weekly, daily }
+enum Screen { case home, library, detail, todos, followup, weekly, daily }
 enum TodoFilter { case all, open, overdue, done }
 enum DetailStatus { case pending, unclaimed, confirmed }
 enum CrossStatus { case overdue, doing, done }
@@ -163,6 +163,17 @@ final class AppStore: ObservableObject {
     // 每日综述 — cached per-day digest of all that day's meetings.
     @Published var dailyBlocks: [String: [NoteBlock]] = DailyStore.load()
     @Published var dailyGenerating: Set<String> = []
+    @Published var dailyDay = ""                 // 放 store 里：跳走再返回不丢选中的天
+
+    // 会议库 tab（纪要 / 原始转写），同样跨跳转保留
+    @Published var libraryRawTab = false
+
+    // 录制条（顶栏常驻）：面板开合 + 刚生成完的纪要（完成态，点击才跳）
+    @Published var showRecPanel = false
+    @Published var freshLiveID: String? = nil
+
+    // 搜索跳到待办中心时闪一下目标行
+    @Published var flashTodoText: String? = nil
 
     // 纪要问答 — per-meeting Q&A grounded in its transcript.
     @Published var qaThreads: [String: [QATurn]] = QAStore.load()
@@ -204,8 +215,7 @@ final class AppStore: ObservableObject {
 
         // Dev affordance: `open AfterMeet.app --args -screen detail [-onboarding YES]`
         switch UserDefaults.standard.string(forKey: "screen") {
-        case "live":     screen = .live
-        case "history":  screen = .history
+        case "library":  screen = .library
         case "detail":   screen = .detail
         case "todos":    screen = .todos
         case "followup": screen = .followup
@@ -258,6 +268,7 @@ final class AppStore: ObservableObject {
                                    now: now, title: title)
                 addLiveMeeting(vm)
                 refining = false
+                freshLiveID = vm.id            // 录制条转完成态，用户点了才跳，不抢页面
                 showToast("已生成会中纪要：\(vm.title)")
             } catch {
                 refining = false
@@ -269,11 +280,11 @@ final class AppStore: ObservableObject {
     func addLiveMeeting(_ vm: MeetingVM) {
         if !usingRealData { meetings = [] }          // drop the sample fallback once real content exists
         usingRealData = true
+        let wasEmpty = meetings.isEmpty
         meetings.insert(vm, at: 0)
         ctodos = AppStore.deriveCrossTodos(from: meetings)
-        selectedMeeting = 0
-        dtodos = vm.dtodos
-        go(.detail)
+        if wasEmpty { selectedMeeting = 0; dtodos = vm.dtodos }
+        else { selectedMeeting += 1 }                // 保持用户正看的那场不被顶掉
     }
 
     // MARK: - Auto meeting detection
@@ -290,7 +301,6 @@ final class AppStore: ObservableObject {
         autoStart = on
         UserDefaults.standard.set(on, forKey: "autoStart")
         if on && meetingActive && !capture.isCapturing {     // already mid-meeting → start now
-            go(.live)
             Task { await capture.start() }
         }
     }
@@ -299,7 +309,6 @@ final class AppStore: ObservableObject {
         meetingActive = active
         if active {
             if autoStart && !capture.isCapturing {
-                go(.live)
                 Task { await capture.start() }
             }
         } else if capture.isCapturing {
@@ -322,7 +331,7 @@ final class AppStore: ObservableObject {
                 }
             }
         } else {
-            go(.live)
+            showRecPanel = true
             Task { await capture.start() }
         }
     }
@@ -398,8 +407,41 @@ final class AppStore: ObservableObject {
         }
     }
 
-    // navigation
-    func go(_ s: Screen) { withAnimation(.easeOut(duration: 0.18)) { screen = s } }
+    // MARK: - navigation（带历史栈：返回永远回「你来的地方」）
+
+    private var backStack: [Screen] = []
+    var canGoBack: Bool { !backStack.isEmpty }
+
+    func go(_ s: Screen) {
+        guard s != screen else { return }
+        backStack.append(screen)
+        if backStack.count > 30 { backStack.removeFirst() }
+        withAnimation(.easeOut(duration: 0.18)) { screen = s }
+    }
+
+    func goBack() {
+        guard let prev = backStack.popLast() else { return }
+        withAnimation(.easeOut(duration: 0.18)) { screen = prev }
+    }
+
+    // 详情页 ‹ › ：时间序上一场/下一场，到头禁用（不循环）
+    var canPrevMeeting: Bool { selectedMeeting > 0 }
+    var canNextMeeting: Bool { selectedMeeting < meetings.count - 1 }
+    var meetingPos: String { "\(selectedMeeting + 1) / \(meetings.count)" }
+
+    func stepMeeting(_ delta: Int) {
+        let i = selectedMeeting + delta
+        guard meetings.indices.contains(i) else { return }
+        selectedMeeting = i
+        dtodos = current.dtodos
+    }
+
+    /// 录制条完成态被点击 → 打开刚生成的纪要
+    func openFreshLive() {
+        guard let id = freshLiveID else { return }
+        freshLiveID = nil
+        if let idx = meetings.firstIndex(where: { $0.id == id }) { selectMeeting(idx) }
+    }
 
     func showToast(_ message: String) {
         toast = message
@@ -636,7 +678,7 @@ final class AppStore: ObservableObject {
         }
         if refining {
             out.append(NotifItem(icon: "wand.and.stars", text: "正在提炼会中纪要…",
-                                 meta: "完成后自动打开", screen: .live))
+                                 meta: "好了会在顶栏录制条亮绿灯", screen: .home))
         }
         if sync.syncing {
             out.append(NotifItem(icon: "arrow.triangle.2.circlepath", text: "正在同步飞书会议…",
@@ -679,8 +721,14 @@ final class AppStore: ObservableObject {
 
     func open(_ hit: SearchHit) {
         switch hit.action {
-        case .meeting(let idx): selectMeeting(idx)
-        case .todos:            go(.todos)
+        case .meeting(let idx):
+            selectMeeting(idx)
+        case .todos:
+            flashTodoText = hit.title            // 落点行闪一下，2 秒后熄
+            go(.todos)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.flashTodoText = nil
+            }
         }
     }
 

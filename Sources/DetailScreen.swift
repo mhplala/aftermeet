@@ -33,13 +33,55 @@ struct DetailScreen: View {
     // MARK: header
 
     private var breadcrumb: some View {
-        HStack(spacing: 6) {
-            Button { store.go(.home) } label: {
-                Text("概览").font(Theme.mono(11)).tracking(1.0).foregroundColor(Theme.inkTertiary)
+        HStack(spacing: 10) {
+            if store.canGoBack {
+                Button { store.goBack() } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                        Text("返回").font(Theme.ui(11.5, .semibold))
+                        Text("⌘[").font(Theme.mono(9)).foregroundColor(Theme.inkMuted)
+                    }
+                    .foregroundColor(Theme.inkSecondary)
+                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .background(Color.white)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                }.buttonStyle(.plain)
+            }
+            Button { store.go(.library) } label: {
+                Text("会议库").font(Theme.mono(11)).tracking(1.0).foregroundColor(Theme.inkTertiary)
             }.buttonStyle(.plain)
             Text("· 会议纪要").font(Theme.mono(11)).tracking(1.0).foregroundColor(Theme.inkTertiary)
+            Spacer()
+            switcher
         }
         .textCase(.uppercase)
+    }
+
+    /// ‹ 上一场 / 下一场 ›（时间序，到头禁用）
+    private var switcher: some View {
+        HStack(spacing: 5) {
+            stepButton("chevron.left", enabled: store.canPrevMeeting) { store.stepMeeting(-1) }
+            Text(store.meetingPos).font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
+                .padding(.horizontal, 3)
+            stepButton("chevron.right", enabled: store.canNextMeeting) { store.stepMeeting(1) }
+        }
+        .textCase(nil)
+    }
+
+    private func stepButton(_ icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundColor(Theme.inkSecondary)
+                .frame(width: 26, height: 26)
+                .background(Color.white)
+                .clipShape(Circle())
+                .overlay(Circle().strokeBorder(Theme.borderDefault, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.3)
     }
 
     private var titleRow: some View {
@@ -67,19 +109,6 @@ struct DetailScreen: View {
 
     private func metaText(_ s: String) -> some View {
         Text(s).font(Theme.mono(12)).foregroundColor(Theme.inkTertiary)
-    }
-
-    private var summary: some View {
-        Text(m.summary)
-            .font(Theme.display(16, .regular)).italic()
-            .foregroundColor(Theme.inkSecondary)
-            .lineSpacing(5)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 18).padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.warmWhite)
-            .overlay(alignment: .leading) { Rectangle().fill(Theme.accent).frame(width: 2) }
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 
     // MARK: sections
@@ -316,9 +345,9 @@ struct DetailScreen: View {
             Button { showForward = true } label: {
                 Text("转发到群").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
                     .padding(.horizontal, 16).padding(.vertical, 9)
-                    .background(Theme.white)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-                    .hairline(Theme.borderDefault, radius: Theme.rMD)
+                    .background(Color.white.opacity(0.75))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showForward, arrowEdge: .top) {
@@ -330,14 +359,16 @@ struct DetailScreen: View {
             Button { store.confirmAll() } label: {
                 Text("全部确认并建任务").font(Theme.ui(13, .semibold)).foregroundColor(.white)
                     .padding(.horizontal, 18).padding(.vertical, 9)
-                    .background(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+                    .background(Theme.greenGrad)
+                    .clipShape(Capsule())
+                    .glow(Theme.accent, radius: 11, opacity: 0.38)
             }.buttonStyle(.plain)
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
-        .background(Theme.white)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rXL, style: .continuous))
-        .hairline(Theme.borderDefault, radius: Theme.rXL)
+        .padding(.leading, 21).padding(.trailing, 13).padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+        .background(Color.white.opacity(0.72))
+        .clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.85), lineWidth: 1))
         .popShadow()
         .frame(maxWidth: 920, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
