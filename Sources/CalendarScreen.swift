@@ -9,6 +9,7 @@ struct CalendarScreen: View {
 
     var body: some View {
         ScrollViewReader { proxy in
+        HStack(alignment: .top, spacing: 0) {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 header
@@ -35,6 +36,8 @@ struct CalendarScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }
+        dateRail(proxy)
+        }
         .onAppear {
             store.loadCalendar()             // TTL 15 分钟内直接用缓存
             // 时间严格升序，打开时直接停在「今天」——往上翻过去，往下翻未来
@@ -43,6 +46,44 @@ struct CalendarScreen: View {
             }
         }
         }
+    }
+
+    // MARK: - 右侧日期快速跳转
+
+    private func dateRail(_ proxy: ScrollViewProxy) -> some View {
+        let df = DateFormatter(); df.dateFormat = "d"
+        let wf = DateFormatter(); wf.locale = Locale(identifier: "zh_CN"); wf.dateFormat = "EEEEE"  // 一字周几
+        let cal = Calendar.current
+        return ScrollView(showsIndicators: false) {
+            VStack(spacing: 3) {
+                ForEach(grouped()) { day in
+                    let date = day.events.first?.start ?? Date()
+                    Button {
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(day.id, anchor: .top) }
+                    } label: {
+                        VStack(spacing: 1) {
+                            Text(day.isToday ? "今" : wf.string(from: date))
+                                .font(Theme.mono(8.5)).foregroundColor(day.isToday ? .white : Theme.inkMuted)
+                            Text(day.isToday ? df.string(from: Date()) : df.string(from: date))
+                                .font(Theme.mono(12, .semibold))
+                                .foregroundColor(day.isToday ? .white : Theme.inkSecondary)
+                            Circle()
+                                .fill(day.events.isEmpty ? Color.clear : (day.isToday ? Color.white : Theme.blue500))
+                                .frame(width: 3.5, height: 3.5)
+                        }
+                        .frame(width: 34, height: 44)
+                        .background(day.isToday ? AnyShapeStyle(Theme.inkGrad) : AnyShapeStyle(Color.clear))
+                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .frame(width: 50)
+        .padding(.top, 96)
+        .padding(.trailing, 12)
     }
 
     private var header: some View {
