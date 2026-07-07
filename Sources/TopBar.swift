@@ -32,6 +32,12 @@ struct TopBar: View {
                 .keyboardShortcut("k", modifiers: .command)
                 .opacity(0)
         }
+        .onAppear {
+            // AppKit 默认把窗口首个文本框设为第一响应者 → 搜索框一直亮着光标；启动后清掉
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if !searchFocused { NSApp.keyWindow?.makeFirstResponder(nil) }
+            }
+        }
     }
 
     // MARK: search — 会议标题/摘要/逐字稿 + 待办/负责人 全文匹配
