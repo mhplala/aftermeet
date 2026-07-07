@@ -46,8 +46,7 @@ struct Sidebar: View {
         .padding(.bottom, 20)
         .frame(width: 248)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial)
-        .background(Theme.sidebarBg)
+        .background(VisualEffect(material: .sidebar))   // 系统玻璃，不叠自定义色
         .overlay(alignment: .trailing) {
             Rectangle().fill(Theme.borderWhisper).frame(width: 1)
         }
@@ -95,11 +94,11 @@ struct Sidebar: View {
                     Circle().fill(Theme.accentGlow).frame(width: 7, height: 7)
                         .glow(Theme.accentGlow, radius: 6, opacity: 0.8)
                 }
-                Text(store.sync.syncing ? "正在同步飞书会议…" : "秘书在线 · 监听中")
+                Text(store.sync.syncing ? "正在同步飞书会议…" : "自动记录已开启")
                     .font(Theme.mono(10))
                     .foregroundColor(Theme.onDarkDim)
             }
-            Text("会中自动转写；飞书纪要每 15 分钟扫一轮，会后自动送达。")
+            Text("会议自动转写，飞书纪要每 15 分钟自动同步。")
                 .font(Theme.ui(12))
                 .foregroundColor(Theme.onDarkDim)
                 .lineSpacing(3)

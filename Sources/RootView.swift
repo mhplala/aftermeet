@@ -14,7 +14,7 @@ struct RootView: View {
                         .background(Theme.canvas)   // 工作区纯白
                 }
             }
-            .background(AmbientBackground())        // 光晕只从框架层透出来
+            .background(VisualEffect(material: .sidebar))   // Tahoe 原生玻璃兜底
 
             if let t = store.toast {
                 ToastView(text: t)

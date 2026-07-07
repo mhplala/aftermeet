@@ -241,7 +241,7 @@ final class AppStore: ObservableObject {
         meetings.insert(contentsOf: vms, at: liveCount)
         ctodos = AppStore.deriveCrossTodos(from: meetings)
         dtodos = current.dtodos
-        showToast("同步到 \(vms.count) 场新会议纪要")
+        showToast("已同步 \(vms.count) 场新会议")
     }
 
     func selectMeeting(_ i: Int) {
@@ -269,7 +269,7 @@ final class AppStore: ObservableObject {
                 addLiveMeeting(vm)
                 refining = false
                 freshLiveID = vm.id            // 录制条转完成态，用户点了才跳，不抢页面
-                showToast("已生成会中纪要：\(vm.title)")
+                showToast("纪要已生成:\(vm.title)")
             } catch {
                 refining = false
                 showToast("提炼失败：\(error.localizedDescription)")
@@ -484,9 +484,9 @@ final class AppStore: ObservableObject {
         }
         for t in pending { createLarkTask(for: t, assignToSelf: false, quiet: true) }
         if usingRealData && Lark.available {
-            showToast("正在把 \(pending.count) 条待办落成飞书任务…")
+            showToast("正在创建 \(pending.count) 个飞书任务…")
         } else {
-            showToast("\(pending.count) 条待办已确认（演示数据，未建真实任务）")
+            showToast("已确认 \(pending.count) 条（示例数据，未创建真实任务）")
         }
     }
 
@@ -494,16 +494,16 @@ final class AppStore: ObservableObject {
     /// 已建过的（task-links 台账里有）不重复建。
     private func createLarkTask(for todo: DetailTodo, assignToSelf: Bool, quiet: Bool = false) {
         guard usingRealData else {
-            if !quiet { showToast("已确认（演示数据，未建真实任务）") }
+            if !quiet { showToast("已确认（示例数据，未创建真实任务）") }
             return
         }
         guard Lark.available else {
-            if !quiet { showToast("未找到 lark-cli，任务只记在本地") }
+            if !quiet { showToast("未检测到 lark-cli，任务仅保存在本地") }
             return
         }
         let key = linkKey(todo.id)
         guard taskLinks[key] == nil else {
-            if !quiet { showToast("这条已建过飞书任务") }
+            if !quiet { showToast("该待办已创建过飞书任务") }
             return
         }
         let meetingTitle = current.title
@@ -515,7 +515,7 @@ final class AppStore: ObservableObject {
                 assignee = (await Lark.me())?.openID
             } else if let owner, !owner.isEmpty {
                 assignee = await Lark.resolveOpenID(name: owner)
-                if assignee == nil { note = "（没找到「\(owner)」的唯一飞书账号，任务未指派）" }
+                if assignee == nil { note = "（未匹配到「\(owner)」的唯一飞书账号，任务未指派）" }
             }
             do {
                 let created = try await Lark.createTask(
@@ -527,13 +527,13 @@ final class AppStore: ObservableObject {
                 taskLinks[key] = created.guid
                 TaskLinkStore.save(taskLinks)
                 if !quiet {
-                    showToast(assignToSelf ? "已认领并建飞书任务，负责人记为你"
-                                           : "飞书任务已建：\(todo.text.prefix(14))…\(note)")
+                    showToast(assignToSelf ? "已认领，飞书任务已创建"
+                                           : "飞书任务已创建：\(todo.text.prefix(14))…\(note)")
                 } else if !note.isEmpty {
                     showToast(note)
                 }
             } catch {
-                showToast("建飞书任务失败：\(error.localizedDescription)")
+                showToast("创建飞书任务失败：\(error.localizedDescription)")
             }
         }
     }
@@ -559,7 +559,7 @@ final class AppStore: ObservableObject {
         if obStep >= 3 {
             showOnboarding = false
             obStep = 0
-            showToast("接入完成 · 秘书已开始监听")
+            showToast("设置完成，自动记录已开启")
         } else {
             withAnimation(.easeOut(duration: 0.2)) { obStep += 1 }
         }
@@ -618,13 +618,13 @@ final class AppStore: ObservableObject {
     // MARK: - 手动同步（菜单栏 / 铃铛里点）
 
     func syncNow() {
-        guard Lark.available else { showToast("未找到 lark-cli，装好并登录后才能同步飞书会议"); return }
+        guard Lark.available else { showToast("未检测到 lark-cli，安装并登录后即可同步飞书会议"); return }
         guard !sync.syncing else { return }
-        showToast("正在扫最近 14 天的飞书会议…")
+        showToast("正在同步最近 14 天的飞书会议…")
         Task {
             let before = meetings.count
             await sync.sync()
-            if meetings.count == before { showToast("没有新会议（已有 \(before) 场）") }
+            if meetings.count == before { showToast("没有发现新会议") }
         }
     }
 
@@ -666,7 +666,7 @@ final class AppStore: ObservableObject {
         var out: [NotifItem] = []
         if pendingCount + unclaimedCount > 0 {
             out.append(NotifItem(icon: "checklist",
-                                 text: "「\(current.title)」还有待办要处理",
+                                 text: "「\(current.title)」有待处理的待办",
                                  meta: confirmHint, screen: .detail))
         }
         let overdue = ctodos.filter { $0.status == .overdue }
@@ -678,11 +678,11 @@ final class AppStore: ObservableObject {
         }
         if refining {
             out.append(NotifItem(icon: "wand.and.stars", text: "正在提炼会中纪要…",
-                                 meta: "好了会在顶栏录制条亮绿灯", screen: .home))
+                                 meta: "完成后可在顶栏查看", screen: .home))
         }
         if sync.syncing {
             out.append(NotifItem(icon: "arrow.triangle.2.circlepath", text: "正在同步飞书会议…",
-                                 meta: "扫最近 14 天", screen: .home))
+                                 meta: "范围：最近 14 天", screen: .home))
         }
         return out
     }
@@ -703,7 +703,9 @@ final class AppStore: ObservableObject {
         guard q.count >= 1 else { return [] }
         var out: [SearchHit] = []
         for (idx, m) in meetings.enumerated() {
-            let hay = "\(m.title) \(m.summary) \(m.rawTranscript)".lowercased()
+            let hay = m.searchBlob.isEmpty
+                ? "\(m.title) \(m.summary)".lowercased()   // 样例数据没建索引，只搜标题摘要
+                : m.searchBlob
             if hay.contains(q) {
                 out.append(SearchHit(icon: "doc.text", title: m.title,
                                      meta: m.recentMeta, action: .meeting(idx)))
@@ -746,7 +748,7 @@ final class AppStore: ObservableObject {
                 showToast("\(what)已发到「\(chat.name)」")
             } catch {
                 if Lark.isMissingScope(error) {
-                    showToast("差一步：终端跑 lark-cli auth login 补 im 发送权限")
+                    showToast("需要授权：请在终端运行 lark-cli auth login 开通消息发送权限")
                 } else {
                     showToast("发送失败：\(error.localizedDescription)")
                 }
@@ -823,10 +825,10 @@ final class AppStore: ObservableObject {
 
     var confirmHint: String {
         if pendingCount > 0 {
-            return "还有 \(pendingCount) 条待确认"
-                + (unclaimedCount > 0 ? "、\(unclaimedCount) 条待认领" : "")
+            return "\(pendingCount) 条待确认"
+                + (unclaimedCount > 0 ? " · \(unclaimedCount) 条待认领" : "")
         }
-        if unclaimedCount > 0 { return "\(unclaimedCount) 条待认领，认领后建任务" }
-        return "全部待办已确认"
+        if unclaimedCount > 0 { return "\(unclaimedCount) 条待认领" }
+        return "待办已全部确认"
     }
 }

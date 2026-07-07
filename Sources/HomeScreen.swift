@@ -60,9 +60,9 @@ struct HomeScreen: View {
         if store.usingRealData {
             let n = store.pendingCount + store.unclaimedCount
             let latest = store.meetings.first?.title ?? ""
-            if n > 0 { return "有 \(n) 条待办在等你确认，「\(latest)」的纪要已经备好。" }
-            if !latest.isEmpty { return "待办都处理完了。最新一场是「\(latest)」。" }
-            return "还没有会议纪要，录一场或等飞书同步。"
+            if n > 0 { return "\(n) 条待办待确认。最新纪要：「\(latest)」。" }
+            if !latest.isEmpty { return "待办已全部处理。最新纪要：「\(latest)」。" }
+            return "暂无会议记录。开始录制，或等待飞书自动同步。"
         }
         return "有 5 条待办在等你确认，周三的评审会纪要已经备好。"
     }
@@ -145,6 +145,8 @@ struct HomeScreen: View {
                     Button { store.go(.library) } label: {
                         Text("全部 \(store.meetings.count) 场 →")
                             .font(Theme.ui(12.5)).foregroundColor(Theme.blue500)
+                            .padding(.vertical, 6).padding(.leading, 14)
+                            .contentShape(Rectangle())
                     }.buttonStyle(.plain)
                 }
                 .padding(.bottom, 16)
@@ -224,7 +226,7 @@ struct HomeScreen: View {
     private var todoCard: some View {
         Card(padding: 22) {
             VStack(alignment: .leading, spacing: 0) {
-                cardHeader(title: "今天该跟的", link: "待办中心 →") { store.go(.todos) }
+                cardHeader(title: "今日跟进", link: "待办中心 →") { store.go(.todos) }
                     .padding(.bottom, 16)
                 let list = store.usingRealData ? realHomeTodos : todos
                 ForEach(Array(list.enumerated()), id: \.element.id) { idx, t in
@@ -254,12 +256,12 @@ struct HomeScreen: View {
 
     private var followupBanner: some View {
         let card = store.recurringCard
-        let title = card.map { "「\($0.title)」快再开了，上次的待办进度已盘好" }
-            ?? "下周二的站会前，有一张进度追问卡等你拍板"
+        let title = card.map { "「\($0.title)」即将再次召开" }
+            ?? "下周二的站会前，有一张进度追问卡待确认"
         let sub: String = {
             guard let c = card else { return "上次 6 条待办：4 完成、2 未动 —— 要不要公开点名？" }
             let done = c.items.filter { $0.done }.count
-            return "上次 \(c.items.count) 条待办：\(done) 完成、\(c.items.count - done) 未动 —— 要不要公开点名，你先过一眼。"
+            return "上次 \(c.items.count) 条待办：\(done) 项已完成、\(c.items.count - done) 项未完成，进度汇总已就绪。"
         }()
         return Button { store.go(.followup) } label: {
             HStack(spacing: 16) {
@@ -276,7 +278,7 @@ struct HomeScreen: View {
                         .foregroundColor(Theme.onDarkDim)
                 }
                 Spacer()
-                Text("去看看 →")
+                Text("查看 →")
                     .font(Theme.ui(12.5, .semibold))
                     .foregroundColor(Theme.onDark)
             }
@@ -300,6 +302,8 @@ struct HomeScreen: View {
             Spacer()
             Button(action: action) {
                 Text(link).font(Theme.ui(12.5)).foregroundColor(Theme.blue500)
+                    .padding(.vertical, 6).padding(.leading, 14)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }

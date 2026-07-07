@@ -3,7 +3,7 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject var store: AppStore
 
-    private let labels = ["第 1 步 · 认识秘书", "第 2 步 · 授权", "第 3 步 · 开启智能纪要", "完成"]
+    private let labels = ["第 1 步 · 功能介绍", "第 2 步 · 授权", "第 3 步 · 开启智能纪要", "完成"]
 
     var body: some View {
         ZStack {
@@ -57,11 +57,10 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 0) {
             iconBadge(bg: Theme.accent, fg: .white, symbol: "checkmark", size: 52, radius: 14)
                 .padding(.bottom, 20)
-            (Text("你好，我是").foregroundColor(Theme.inkPrimary)
-                + Text("会后秘书").foregroundColor(Theme.accent)
-                + Text("。").foregroundColor(Theme.inkPrimary))
+            (Text("会后").foregroundColor(Theme.inkPrimary)
+                + Text("秘书").foregroundColor(Theme.accent))
                 .font(Theme.display(28, .medium)).tracking(-0.5).padding(.bottom, 12)
-            Text("会议一结束，我就把逐字稿整理成「决策 + 待办 + 责任人」，待办直接落成飞书任务，下次开会前还会主动追问完成情况。\n\n妙记负责记录，我负责闭环。整个过程你不用动手。")
+            Text("会议结束后自动整理逐字稿，生成决策、待办与负责人；待办可一键创建为飞书任务，并在下次会议前汇总完成进度。\n\n全程无需手动操作。")
                 .font(Theme.ui(14.5)).foregroundColor(Theme.inkSecondary).lineSpacing(6)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -71,7 +70,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("需要你授权 7 项权限")
                 .font(Theme.display(26, .medium)).tracking(-0.5).foregroundColor(Theme.inkPrimary).padding(.bottom, 8)
-            Text("一次性授权，之后全自动。我只读你参加过的会。")
+            Text("一次性授权，仅读取你参加过的会议。")
                 .font(Theme.ui(14)).foregroundColor(Theme.inkSecondary).padding(.bottom, 18)
             VStack(spacing: 1) {
                 permRow("读取会议与妙记纪要")
@@ -109,10 +108,10 @@ struct OnboardingView: View {
                 .background(Theme.warn50).clipShape(Capsule()).padding(.bottom, 16)
             Text("把「智能纪要」设为默认开启")
                 .font(Theme.display(26, .medium)).tracking(-0.5).foregroundColor(Theme.inkPrimary).padding(.bottom, 12)
-            (Text("没有逐字稿，秘书就是聋的 —— 这是我能不能帮上忙的生死线。\n在飞书「视频会议设置」里，把")
+            (Text("智能纪要提供逐字稿，是自动生成纪要的前提。\n请在飞书「视频会议设置」中将")
                 .foregroundColor(Theme.inkSecondary)
                 + Text("智能纪要默认开启").foregroundColor(Theme.inkPrimary.opacity(0.85)).fontWeight(.semibold)
-                + Text("打开，以后每场会我都能拿到原料。").foregroundColor(Theme.inkSecondary))
+                + Text("打开。").foregroundColor(Theme.inkSecondary))
                 .font(Theme.ui(14)).lineSpacing(6).fixedSize(horizontal: false, vertical: true).padding(.bottom, 16)
             (Text("设置 → 视频会议 → 录制与纪要 → ").foregroundColor(Theme.inkSecondary)
                 + Text("智能纪要 · 默认开启").foregroundColor(Theme.accentInk).fontWeight(.semibold))
@@ -128,9 +127,9 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 0) {
             iconBadge(bg: Theme.green50, fg: Theme.green500, symbol: "checkmark", size: 52, radius: 26)
                 .padding(.bottom, 20)
-            Text("都设好了。")
+            Text("设置完成")
                 .font(Theme.display(28, .medium)).tracking(-0.5).foregroundColor(Theme.inkPrimary).padding(.bottom, 12)
-            Text("等你下一个会结束，我会主动来找你 —— 5 分钟内，纪要卡片会出现在你的私聊里。\n\n在那之前，你什么都不用做。")
+            Text("下一场会议结束后，纪要将自动生成并同步到这里。")
                 .font(Theme.ui(14.5)).foregroundColor(Theme.inkSecondary).lineSpacing(6)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -164,7 +163,7 @@ struct OnboardingView: View {
     private var nextLabel: String {
         switch store.obStep {
         case 0: return "开始"
-        case 3: return "进入秘书"
+        case 3: return "开始使用"
         default: return "下一步"
         }
     }

@@ -209,6 +209,7 @@ struct MeetingVM: Identifiable {
     let keyPoints: [String]
     let blocks: [NoteBlock]
     let rawTranscript: String      // full text, fed to 豆包 for Q&A
+    var searchBlob: String = ""    // 预小写的检索索引（标题+摘要+逐字稿），免得每敲一键全量 lowercased
 }
 
 extension MeetingVM {
@@ -264,6 +265,7 @@ extension MeetingVM {
         let people = m.participants.map { "\($0)人" } ?? ""
         self.recentMeta = [m.dateLabel ?? "", people, "\(m.todos.count) 条待办"]
             .filter { !$0.isEmpty }.joined(separator: " · ")
+        self.searchBlob = "\(self.title) \(self.summary) \(self.rawTranscript)".lowercased()
     }
 
     /// Build a meeting from a locally-captured + refined live session.
@@ -298,6 +300,7 @@ extension MeetingVM {
         self.dtodos = MeetingVM.mapTodos(note.todos)
         self.dayChip = MeetingVM.dayChip(from: dateStr)
         self.recentMeta = [dateStr, "时长 \(dur)", "\(note.todos.count) 条待办"].joined(separator: " · ")
+        self.searchBlob = "\(self.title) \(self.summary) \(transcript)".lowercased()
     }
 
     static func dayChip(from label: String?) -> String {

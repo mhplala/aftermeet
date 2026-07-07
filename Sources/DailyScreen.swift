@@ -18,8 +18,8 @@ struct DailyScreen: View {
                 header
                 if days.isEmpty {
                     Card(padding: 0) {
-                        EmptyState(icon: "sun.max", title: "还没有会可综合",
-                                   message: "录几场会、或补上历史纪要后，这里按天给你一份综述。")
+                        EmptyState(icon: "sun.max", title: "暂无可汇总的会议",
+                                   message: "有会议纪要后，这里会按天生成综述。")
                     }
                 } else {
                     dayChips
@@ -43,7 +43,7 @@ struct DailyScreen: View {
             (Text("每日").foregroundColor(Theme.inkPrimary)
                 + Text("综述").foregroundColor(Theme.accent))
                 .font(Theme.display(38, .medium)).tracking(-0.9)
-            Text("把一天开的所有会综合成一份 digest —— 今天整体在推什么、跨会的共性、当天所有决策。")
+            Text("将当天所有会议汇总为一份综述：整体进展、跨会共性与全部决策。")
                 .font(Theme.display(15, .regular))
                 .foregroundColor(Theme.inkSecondary).padding(.top, 8)
         }
@@ -64,10 +64,11 @@ struct DailyScreen: View {
                                 .foregroundColor(on ? .white.opacity(0.7) : Theme.inkTertiary)
                         }
                         .foregroundColor(on ? .white : Theme.inkSecondary)
-                        .padding(.horizontal, 13).padding(.vertical, 8)
+                        .padding(.horizontal, 14).padding(.vertical, 9)
                         .background(on ? Theme.ink1000 : Theme.white)
                         .clipShape(Capsule())
                         .overlay { if !on { Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1) } }
+                        .contentShape(Capsule())
                     }.buttonStyle(.plain)
                 }
             }
@@ -85,7 +86,7 @@ struct DailyScreen: View {
                     Button { store.generateDigest(day: day, force: true) } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold))
-                            Text("重新综合")
+                            Text("重新生成")
                         }.font(Theme.ui(12)).foregroundColor(Theme.inkTertiary)
                     }.buttonStyle(.plain)
                 }
@@ -95,14 +96,14 @@ struct DailyScreen: View {
             Card(padding: 0) {
                 HStack(spacing: 12) {
                     ProgressView().controlSize(.small)
-                    Text("正在综合当天 \(current.count) 场会…")
+                    Text("正在汇总 \(current.count) 场会议…")
                         .font(Theme.ui(14)).foregroundColor(Theme.inkSecondary)
                 }.frame(maxWidth: .infinity).padding(.vertical, 44)
             }
         } else {
             Card(padding: 0) {
                 VStack(spacing: 12) {
-                    Text("还没生成 \(day) 的综述").font(Theme.ui(14)).foregroundColor(Theme.inkSecondary)
+                    Text("尚未生成 \(day) 的综述").font(Theme.ui(14)).foregroundColor(Theme.inkSecondary)
                     Button { store.generateDigest(day: day, force: true) } label: {
                         Text("生成综述").font(Theme.ui(13, .semibold)).foregroundColor(.white)
                             .padding(.horizontal, 18).padding(.vertical, 9)
@@ -116,7 +117,7 @@ struct DailyScreen: View {
 
     private var meetingsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("当天的会（\(current.count)）")
+            Text("当天会议（\(current.count)）")
                 .font(Theme.display(18, .medium)).foregroundColor(Theme.inkPrimary)
             VStack(spacing: 0) {
                 ForEach(Array(current.enumerated()), id: \.element.id) { idx, m in

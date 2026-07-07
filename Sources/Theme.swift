@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - Hex color
 
@@ -115,25 +116,22 @@ enum Theme {
     }
 }
 
-// MARK: - 背景光晕（浅蓝 / 蜜桃 / 薄荷 / 暖白，缓慢漂移的柔光）
+// MARK: - 系统原生玻璃（Tahoe）：侧栏 / 标题栏直接用 NSVisualEffectView，不叠自定义颜色
 
-struct AmbientBackground: View {
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width, h = geo.size.height
-            ZStack {
-                Theme.pageBg
-                blob(Color(hex: "b3d2ff"), d: 640).position(x: w * 0.12, y: h * 0.05)
-                blob(Color(hex: "ffe3c4"), d: 560).position(x: w * 0.92, y: h * 0.08)
-                blob(Color(hex: "b5f0d4"), d: 540).position(x: w * 0.18, y: h * 1.02)
-                blob(Color(hex: "ffd8c5"), d: 460).position(x: w * 0.90, y: h * 0.98)
-            }
-        }
-        .ignoresSafeArea()
+struct VisualEffect: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .sidebar
+    var blending: NSVisualEffectView.BlendingMode = .behindWindow
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = material
+        v.blendingMode = blending
+        v.state = .active
+        return v
     }
-
-    private func blob(_ c: Color, d: CGFloat) -> some View {
-        Circle().fill(c).frame(width: d, height: d).blur(radius: 95).opacity(0.62)
+    func updateNSView(_ v: NSVisualEffectView, context: Context) {
+        v.material = material
+        v.blendingMode = blending
     }
 }
 

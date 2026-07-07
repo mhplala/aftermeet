@@ -26,7 +26,7 @@ final class FeishuSync: ObservableObject {
      "nextAgenda":["建议下次议题"],
      "excerpts":[{"time":"HH:MM","who":"说话人","text":"代表性原话"}]
     }
-    规则:负责人只有逐字稿明确指派时才填 owner，否则 owner=null 且 confidence=low(宁可多问不可派错)。decisions/disputes 没有就空数组。excerpts 选 4-6 条能体现讨论的关键原话。红线:基于逐字稿本身分析，不要照搬已有 AI 纪要。只输出 JSON。
+    规则：负责人只有逐字稿明确指派时才填 owner，否则 owner=null 且 confidence=low(宁可多问不可派错)。decisions/disputes 没有就空数组。excerpts 选 4-6 条能体现讨论的关键原话。红线：基于逐字稿本身分析，不要照搬已有 AI 纪要。只输出 JSON。
     """
 
     /// 启动：先来一次，之后每 15 分钟扫一轮（会后纪要生成通常在会议结束后几分钟内）。

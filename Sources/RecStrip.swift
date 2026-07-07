@@ -70,7 +70,7 @@ struct RecStrip: View {
         case .idle:
             Text("录制").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkSecondary)
         case .detected:
-            Text("检测到会议 · 开始记录").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.accentInk)
+            Text("检测到会议 · 点击开始记录").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.accentInk)
         case .recording:
             HStack(spacing: 7) {
                 Text("录制中").font(Theme.ui(12.5, .semibold))
@@ -146,7 +146,7 @@ struct RecPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cap.isCapturing ? "录制中 \(timeString)" : (store.refining ? "整理中…" : "未开始"))
                         .font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary)
-                    Text("音频不出网 · 端上转写 · 请确保参会者知情")
+                    Text("音频仅在本机处理 · 请确保参会者知情")
                         .font(Theme.mono(9.5)).foregroundColor(Theme.inkTertiary)
                 }
                 Spacer()
@@ -167,7 +167,7 @@ struct RecPanel: View {
         HStack(spacing: 8) {
             Image(systemName: "pencil.and.list.clipboard")
                 .font(.system(size: 12)).foregroundColor(Theme.inkTertiary)
-            TextField("给这场会起个名（停录后豆包也会按内容补一个）", text: $nameEdit)
+            TextField("会议名称(留空则根据内容自动生成)", text: $nameEdit)
                 .textFieldStyle(.plain).font(Theme.ui(12.5)).foregroundColor(Theme.inkPrimary)
                 .onSubmit { cap.setMeetingName(nameEdit) }
             if !nameEdit.isEmpty {
@@ -184,7 +184,7 @@ struct RecPanel: View {
 
     private var suggestionRow: some View {
         HStack(spacing: 7) {
-            Text("日程里这会儿是").font(Theme.mono(10)).foregroundColor(Theme.inkTertiary)
+            Text("当前日程").font(Theme.mono(10)).foregroundColor(Theme.inkTertiary)
             Button {
                 nameEdit = cap.calendarSuggestion
                 cap.setMeetingName(cap.calendarSuggestion)
@@ -218,7 +218,7 @@ struct RecPanel: View {
     private var liveBox: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                Text(cap.liveText.isEmpty ? "（听着呢…说点什么）" : cap.liveText)
+                Text(cap.liveText.isEmpty ? "正在聆听…" : cap.liveText)
                     .font(Theme.ui(12.5))
                     .foregroundColor(cap.liveText.isEmpty ? Theme.inkTertiary : Theme.inkPrimary.opacity(0.88))
                     .lineSpacing(5).frame(maxWidth: .infinity, alignment: .leading)

@@ -27,8 +27,8 @@ struct FollowupScreen: View {
                 if store.usingRealData && real == nil {
                     Card(padding: 0) {
                         EmptyState(icon: "clock.arrow.circlepath",
-                                   title: "还没识别到周期性会议",
-                                   message: "会前追问靠「同一主题的会议再次发生」触发。\n等某场会重复出现，我把上次待办的完成情况整理到这里。")
+                                   title: "暂无周期性会议",
+                                   message: "当同一主题的会议再次发生时，\n这里会自动生成上次待办的进度汇总。")
                     }
                 } else {
                     card
@@ -42,11 +42,11 @@ struct FollowupScreen: View {
 
     private var subtitle: String {
         if let real {
-            return "「\(real.title)」开过不止一次。上一场的待办进度我盘好了，公开点名前你先过一眼。"
+            return "「\(real.title)」为周期性会议，已汇总上一场待办的完成情况。"
         }
         return store.usingRealData
-            ? "会前 2 小时，我会盘点上一场同主题会议的待办完成情况，放在这里等你过目。"
-            : "下周二 10:00「产品周例会」开始前，我整理了上次的待办进度。公开点名前，你先过一眼。"
+            ? "同主题会议再次召开前，这里会自动汇总上一场待办的完成情况。"
+            : "「产品周例会」开始前，已汇总上次待办的完成进度。"
     }
 
     private var card: some View {
@@ -158,12 +158,12 @@ struct FollowupScreen: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("公开转发会 @ 未完成项的负责人。要不要点名，你说了算。")
+            Text("转发到群后，将 @ 未完成项的负责人。")
                 .font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button { store.showToast("已存为草稿，仅你可见") } label: {
-                Text("仅自己看").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
+            Button { store.showToast("已存为草稿") } label: {
+                Text("存为草稿").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
                     .padding(.horizontal, 15).padding(.vertical, 9)
                     .background(Theme.white)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
@@ -173,7 +173,7 @@ struct FollowupScreen: View {
                 if real != nil {
                     showForward = true
                 } else {
-                    store.showToast("进度追问卡已发到「产品周例会」群（演示）")
+                    store.showToast("已发送（示例数据）")
                 }
             } label: {
                 Text("发到会议群").font(Theme.ui(13, .semibold)).foregroundColor(.white)

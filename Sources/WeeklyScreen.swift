@@ -19,8 +19,8 @@ struct WeeklyScreen: View {
                 if store.usingRealData {
                     Card(padding: 0) {
                         EmptyState(icon: "chart.line.uptrend.xyaxis",
-                                   title: "趋势还在攒数据",
-                                   message: "闭环率走势和拖延 Top 5 需要跨周的历史。\n等同步过几周会议、待办开始闭环后，这里自动出图。")
+                                   title: "数据积累中",
+                                   message: "闭环率趋势与拖延排行需要多周历史数据，\n累计足够后将自动生成。")
                     }
                 } else {
                     HStack(alignment: .top, spacing: 16) {

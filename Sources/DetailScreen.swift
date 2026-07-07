@@ -42,10 +42,11 @@ struct DetailScreen: View {
                         Text("⌘[").font(Theme.mono(9)).foregroundColor(Theme.inkMuted)
                     }
                     .foregroundColor(Theme.inkSecondary)
-                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(Color.white)
                     .clipShape(Capsule())
                     .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                    .contentShape(Capsule())
                 }.buttonStyle(.plain)
             }
             Button { store.go(.library) } label: {
@@ -74,10 +75,11 @@ struct DetailScreen: View {
             Image(systemName: icon)
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundColor(Theme.inkSecondary)
-                .frame(width: 26, height: 26)
+                .frame(width: 28, height: 28)
                 .background(Color.white)
                 .clipShape(Circle())
                 .overlay(Circle().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -226,9 +228,11 @@ struct DetailScreen: View {
                 } label: {
                     Text("复制完整逐字稿 →")
                         .font(Theme.mono(11.5)).foregroundColor(Theme.blue500)
+                        .padding(.vertical, 6).padding(.trailing, 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 12)
+                .padding(.top, 8)
             }
             .padding(.horizontal, 20).padding(.bottom, 18).padding(.top, 4)
         })
@@ -244,7 +248,7 @@ struct DetailScreen: View {
                 Dot(color: Theme.blue500)
                 Text("问这场会").font(Theme.display(18, .medium)).foregroundColor(Theme.inkPrimary)
                 Spacer()
-                Text("豆包 · 仅据逐字稿").font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
+                Text("基于逐字稿回答").font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
             }
             .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 12)
 
@@ -272,7 +276,7 @@ struct DetailScreen: View {
                     if pending {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("正在看逐字稿…").font(Theme.ui(13)).foregroundColor(Theme.inkTertiary)
+                            Text("正在检索逐字稿…").font(Theme.ui(13)).foregroundColor(Theme.inkTertiary)
                         }
                     }
                 }
@@ -280,7 +284,7 @@ struct DetailScreen: View {
             }
 
             HStack(spacing: 10) {
-                TextField("问点什么，比如：为什么砍了硬核游戏？", text: $question)
+                TextField("就这场会提问…", text: $question)
                     .textFieldStyle(.plain).font(Theme.ui(13.5))
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(Theme.warmWhite)
@@ -337,8 +341,8 @@ struct DetailScreen: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(store.confirmHint).font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary)
-                Text(store.usingRealData ? "确认后即在飞书任务中建卡，负责人会收到提醒"
-                                         : "演示数据 · 确认只改本地状态，不建真实任务")
+                Text(store.usingRealData ? "确认后自动创建飞书任务并通知负责人"
+                                         : "示例数据 · 不会创建真实任务")
                     .font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()

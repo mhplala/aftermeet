@@ -53,7 +53,7 @@ enum Refine {
     static let model = "doubao-seed-2-0-mini-260428"
 
     static let system = """
-    你是给业务负责人做"生成式会议纪要"的资深参谋。读完逐字稿，按这场会的内容自己决定用哪些"积木"、怎么排，只输出严格 JSON(无 markdown、无多余文字)。目标:详尽、有深度、为这场会量身排版。
+    你是给业务负责人做"生成式会议纪要"的资深参谋。读完逐字稿，按这场会的内容自己决定用哪些"积木"、怎么排，只输出严格 JSON(无 markdown、无多余文字)。目标：详尽、有深度、为这场会量身排版。
     顶层:{"title":"具体到能一眼分辨是哪场会","todos":[{"text":"行动项","owner":"姓名或null","due":"M/D或null","confidence":"high或low"}],"blocks":[…有序积木…]}
     每个积木 = {"type":"X", …对应字段}。**积木里的 items 永远是“字符串数组”，多个子字段用 | 分隔，绝不写成对象数组**:
     - {"type":"summary","text":"2-4句直给takeaway，带关键数字"}（必放且在最前）
@@ -65,7 +65,7 @@ enum Refine {
     - {"type":"timeline","items":["Q3|标签|详情"]}（落地节奏/路线图）
     - {"type":"quote","text":"一句关键原话","who":"谁"}
     - {"type":"nextAgenda","items":["下次议题"]}（仅逐字稿真提到）
-    红线:积木的 items 一律字符串数组、用 | 分隔子字段，绝不写成 [{...}]。todos 只在逐字稿明确指派才填 owner，否则 owner=null 且 confidence=low。数字/专名优先保留，拿不准别编。只输出 JSON。
+    红线：积木的 items 一律字符串数组、用 | 分隔子字段，绝不写成 [{...}]。todos 只在逐字稿明确指派才填 owner，否则 owner=null 且 confidence=low。数字/专名优先保留，拿不准别编。只输出 JSON。
     """
 
     static let dailySystem = """
@@ -95,7 +95,7 @@ enum Refine {
     }
 
     static let qaSystem = """
-    你是这场会议的问答助手。只根据下面给你的会议逐字稿回答用户问题:准确、简洁、直接,能引用原话/数字就引用;逐字稿里没有的就直说"逐字稿里没提到",绝不编造。中文,别客套。
+    你是这场会议的问答助手。只根据下面给你的会议逐字稿回答用户问题：准确、简洁、直接，能引用原话/数字就引用；逐字稿里没有的就直说"逐字稿里没提到",绝不编造。中文，别客套。
     """
 
     /// Free-text Q&A grounded in one meeting's transcript — returns the answer text (not JSON).

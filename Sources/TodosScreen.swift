@@ -20,7 +20,7 @@ struct TodosScreen: View {
             Overline("跨会议 · 任务闭环", tracking: 1.2).padding(.bottom, 8)
             Text("待办中心")
                 .font(Theme.display(38, .medium)).tracking(-0.9).foregroundColor(Theme.inkPrimary)
-            Text("所有会议产生的待办，落在一处。勾掉一条，闭环率就往上走一点。")
+            Text("所有会议的待办集中在这里，完成情况实时计入闭环率。")
                 .font(Theme.display(15, .regular))
                 .foregroundColor(Theme.inkSecondary).padding(.top, 8)
         }
@@ -48,10 +48,11 @@ struct TodosScreen: View {
             Text(label)
                 .font(Theme.ui(12.5, .semibold))
                 .foregroundColor(on ? Theme.inkPrimary : Theme.inkSecondary)
-                .padding(.horizontal, 13).padding(.vertical, 6)
+                .padding(.horizontal, 14).padding(.vertical, 7)
                 .background(on ? Theme.white : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
                 .shadow(color: on ? .black.opacity(0.06) : .clear, radius: 1, x: 0, y: 1)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

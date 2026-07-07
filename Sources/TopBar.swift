@@ -26,8 +26,7 @@ struct TopBar: View {
         }
         .padding(.horizontal, 24)
         .frame(height: 60)
-        .background(.ultraThinMaterial)
-        .background(Color.white.opacity(0.35))
+        .background(VisualEffect(material: .headerView))   // 系统玻璃标题栏
         .overlay(alignment: .bottom) { Hairline() }
         .background {   // ⌘K 聚焦搜索
             Button("") { searchFocused = true }
@@ -79,7 +78,7 @@ struct TopBar: View {
         if searchFocused && !query.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 if hits.isEmpty {
-                    Text("没搜到「\(query)」")
+                    Text("未找到与「\(query)」相关的内容")
                         .font(Theme.ui(12.5)).foregroundColor(Theme.inkTertiary)
                         .padding(.horizontal, 14).padding(.vertical, 12)
                 } else {
@@ -144,12 +143,12 @@ struct TopBar: View {
 
     private var bellPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("需要你处理")
+            Text("待处理")
                 .font(Theme.mono(10, .semibold)).tracking(1.0).textCase(.uppercase)
                 .foregroundColor(Theme.inkTertiary)
                 .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
             if store.notifications.isEmpty {
-                Text("都处理完了，没有待你动手的事。")
+                Text("暂无待处理事项。")
                     .font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
                     .padding(.horizontal, 14).padding(.bottom, 14).padding(.top, 4)
             } else {

@@ -7,6 +7,7 @@ struct TranscriptFile: Identifiable {
     let chars: Int
     let preview: String
     let body: String
+    let paragraphs: [String]   // 预切好的段落，几万字全文用 LazyVStack 按段懒渲染
 }
 
 /// 会议库 —— 所有会议的家：纪要（按天分组）+ 原始转写（本地存档全文）。
@@ -35,14 +36,14 @@ struct LibraryScreen: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 0) {
-                    Overline("全部会议 · 按天分组", tracking: 1.2).padding(.bottom, 8)
+                    Overline("全部会议", tracking: 1.2).padding(.bottom, 8)
                     Text("会议库")
                         .font(Theme.display(36, .semibold)).tracking(-0.8)
                         .foregroundColor(Theme.inkPrimary)
                 }
                 Spacer()
                 Text(store.libraryRawTab
-                     ? "本地存档 · 音频不出网"
+                     ? "本地存档 · 仅保存在本机"
                      : "\(store.meetings.count) 场 · \(store.ctodos.count) 条待办")
                     .font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
             }
@@ -70,10 +71,11 @@ struct LibraryScreen: View {
             Text(label)
                 .font(Theme.ui(12.5, .semibold))
                 .foregroundColor(on ? Theme.inkPrimary : Theme.inkSecondary)
-                .padding(.horizontal, 16).padding(.vertical, 6)
+                .padding(.horizontal, 18).padding(.vertical, 8)
                 .background(on ? Color.white.opacity(0.92) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rMD - 1, style: .continuous))
                 .shadow(color: on ? Color(hex: "5862a8").opacity(0.14) : .clear, radius: 4, x: 0, y: 2)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -84,8 +86,8 @@ struct LibraryScreen: View {
     private var notesList: some View {
         if store.meetings.isEmpty {
             Card(padding: 0) {
-                EmptyState(icon: "books.vertical", title: "还没有会议",
-                           message: "点顶栏「录制」录一场，或让飞书同步送来第一份纪要。")
+                EmptyState(icon: "books.vertical", title: "暂无会议记录",
+                           message: "使用顶部「录制」开始第一场会议，或等待飞书自动同步。")
             }
             .padding(.top, 14)
         } else {
@@ -184,6 +186,7 @@ struct LibraryScreen: View {
 struct TranscriptArchiveView: View {
     @State private var files: [TranscriptFile] = []
     @State private var selected: TranscriptFile?
+    @State private var loading = true
 
     static var dir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -195,19 +198,32 @@ struct TranscriptArchiveView: View {
             if let sel = selected { detail(sel) } else { list }
         }
         .padding(.top, 14)
-        .onAppear(perform: load)
+        .task {
+            // 文件 IO + 解析放后台，几十个 .txt 不卡主线程
+            let loaded = await Task.detached(priority: .userInitiated) { Self.loadFiles() }.value
+            files = loaded
+            loading = false
+        }
     }
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("同一场会的碎片（间隔 <12 分钟）自动合并成一条，点开看全文。边转边写，崩了也不丢。")
+            Text("相邻的转写片段自动合并为一条记录，点击查看全文。内容实时保存。")
                 .font(Theme.ui(12.5)).foregroundColor(Theme.inkTertiary)
                 .padding(.bottom, 14)
 
-            if files.isEmpty {
+            if loading {
                 Card(padding: 0) {
-                    EmptyState(icon: "doc.text", title: "还没有转写记录",
-                               message: "点顶栏「录制」录一场，文字会实时存到这里。")
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("正在读取本地存档…").font(Theme.ui(13)).foregroundColor(Theme.inkTertiary)
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 36)
+                }
+            } else if files.isEmpty {
+                Card(padding: 0) {
+                    EmptyState(icon: "doc.text", title: "暂无转写记录",
+                               message: "使用顶部「录制」开始记录，文字会实时保存到这里。")
                 }
             } else {
                 Card(padding: 0) {
@@ -279,11 +295,15 @@ struct TranscriptArchiveView: View {
             Text("\(f.chars) 字").font(Theme.mono(11.5)).foregroundColor(Theme.inkTertiary).padding(.bottom, 16)
 
             Card(padding: 22) {
-                Text(f.body)
-                    .font(Theme.ui(14)).foregroundColor(Theme.inkPrimary.opacity(0.88))
-                    .lineSpacing(6).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(f.paragraphs.enumerated()), id: \.offset) { _, para in
+                        Text(para)
+                            .font(Theme.ui(14)).foregroundColor(Theme.inkPrimary.opacity(0.88))
+                            .lineSpacing(6).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
     }
@@ -292,7 +312,7 @@ struct TranscriptArchiveView: View {
 
     private struct Frag { let url: URL; let start: Date; let end: Date; let name: String; let dateStr: String; let body: String }
 
-    private func load() {
+    private static func loadFiles() -> [TranscriptFile] {
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: Self.dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         let dd = DateFormatter(); dd.locale = Locale(identifier: "zh_CN"); dd.dateFormat = "M月d日 HH:mm"
@@ -318,7 +338,7 @@ struct TranscriptArchiveView: View {
 
         let tf = DateFormatter(); tf.dateFormat = "HH:mm"
         let generic: (String) -> Bool = { $0.isEmpty || $0 == "未命名会议" || $0 == "会中实时转写" }
-        files = groups.map { g -> TranscriptFile in
+        return groups.map { g -> TranscriptFile in
             // name from the largest non-generic fragment — most representative, usually the 豆包 content name
             let name = g.filter { !generic($0.name) }.max(by: { $0.body.count < $1.body.count })?.name ?? "未命名会议"
             let body = g.map { $0.body }.joined(separator: "\n")
@@ -327,13 +347,15 @@ struct TranscriptArchiveView: View {
             let title = g.count > 1
                 ? "\(name) · \(dayPart) \(span)（\(g.count) 段合并）"
                 : "\(name) · \(g.first!.dateStr)"
+            let paras = body.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             return TranscriptFile(url: g.first!.url, title: title, chars: body.count,
                                   preview: String(body.replacingOccurrences(of: "\n", with: " ").prefix(90)),
-                                  body: body)
+                                  body: body, paragraphs: paras)
         }.reversed()
     }
 
-    private func startFromFilename(_ url: URL) -> Date? {
+    private static func startFromFilename(_ url: URL) -> Date? {
         let s = url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "会中转写-", with: "")
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd-HHmmss"; df.timeZone = .current
         return df.date(from: s)
