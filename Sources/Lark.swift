@@ -46,7 +46,7 @@ enum Lark {
 
     // MARK: - 日历：日程读取（会前追问 ground truth / 时间戳猜会议名）
 
-    struct CalEvent { let summary: String; let start: Date; let end: Date }
+    struct CalEvent: Codable { let summary: String; let start: Date; let end: Date }
     struct UpcomingEvent { let summary: String; let dateLabel: String; let start: Date }
 
     /// 一段时间内的日程（过滤 placeholder / cowork / 全天占位）。

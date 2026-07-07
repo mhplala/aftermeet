@@ -4,8 +4,8 @@ import SwiftUI
 /// 过去的会「已有纪要」（点击进详情）/「未记录」；未来的会一键跳飞书日历。
 struct CalendarScreen: View {
     @EnvironmentObject var store: AppStore
-    @State private var events: [Lark.CalEvent] = []
-    @State private var loading = true
+    private var events: [Lark.CalEvent] { store.calEvents }
+    private var loading: Bool { store.calLoading && store.calEvents.isEmpty }
 
     var body: some View {
         ScrollView {
@@ -34,7 +34,7 @@ struct CalendarScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }
-        .task { await load() }
+        .onAppear { store.loadCalendar() }   // TTL 15 分钟内直接用缓存
     }
 
     private var header: some View {
@@ -46,6 +46,21 @@ struct CalendarScreen: View {
                     .foregroundColor(Theme.inkPrimary)
             }
             Spacer()
+            Button { store.loadCalendar(force: true) } label: {
+                HStack(spacing: 5) {
+                    if store.calLoading { ProgressView().controlSize(.mini) }
+                    else { Image(systemName: "arrow.clockwise").font(.system(size: 11)) }
+                    Text("刷新").font(Theme.ui(12, .semibold))
+                }
+                .foregroundColor(Theme.inkSecondary)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Color.white)
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.calLoading)
             Button { Lark.openCalendar(at: Date()) } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.up.forward.app").font(.system(size: 11))
@@ -216,9 +231,4 @@ struct CalendarScreen: View {
         }
     }
 
-    private func load() async {
-        events = await Lark.events(from: Date().addingTimeInterval(-7 * 86400),
-                                   to: Date().addingTimeInterval(7 * 86400))
-        loading = false
-    }
 }

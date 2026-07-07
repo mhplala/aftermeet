@@ -390,3 +390,22 @@ extension MeetingVM {
         rawTranscript: "林涛：这次评审重点就一个，V2.3 先打哪个点。王凯：用户最容易流失在“收到纪要但没人跟”这一步，所以先做追问。陈默：追问卡公开转发要不要默认匿名？林涛：不默认匿名，但点不点名让用户自己拍板。高翔：负责人映射我担心派错，建议低置信度统一走待认领。"
     )
 }
+
+// MARK: - 日历缓存 — 前后 7 天日程落盘，启动秒开
+
+enum CalCache {
+    static var fileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("AfterMeet/calendar-cache.json")
+    }
+    static func load() -> [Lark.CalEvent] {
+        guard let data = try? Data(contentsOf: fileURL),
+              let events = try? JSONDecoder().decode([Lark.CalEvent].self, from: data) else { return [] }
+        return events
+    }
+    static func save(_ events: [Lark.CalEvent]) {
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(events) { try? data.write(to: fileURL) }
+    }
+}

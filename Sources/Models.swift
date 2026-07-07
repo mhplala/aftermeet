@@ -248,7 +248,8 @@ final class AppStore: ObservableObject {
         syncForward = sync.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         sync.start()
         buildArchiveIndex()      // 转写档案全文进搜索
-        loadUpcomingEvents()     // 未来 7 天日程（会前追问交叉比对）
+        calEvents = CalCache.load()   // 上次的日历先顶上（秒开），随后后台刷新
+        loadCalendar()
         refreshDerived()
     }
 
@@ -714,12 +715,33 @@ final class AppStore: ObservableObject {
         var upcomingDate: Date? = nil      // 点击跳飞书日历用
     }
 
-    // 未来 7 天日历日程，启动时拉一次（会前追问的 ground truth）
-    @Published var upcomingEvents: [Lark.UpcomingEvent] = []
+    // 日历缓存：前后 7 天日程，TTL 15 分钟 + 落盘（页面秒开，不每次都打 CLI）
+    @Published var calEvents: [Lark.CalEvent] = []
+    @Published var calLoading = false
+    private var calFetchedAt: Date? = nil
+    var upcomingEvents: [Lark.UpcomingEvent] {
+        let out = DateFormatter(); out.locale = Locale(identifier: "zh_CN"); out.dateFormat = "M月d日 EEE HH:mm"
+        var seen = Set<String>()
+        return calEvents.filter { $0.start > Date() }.sorted { $0.start < $1.start }.compactMap { ev in
+            guard !seen.contains(ev.summary) else { return nil }
+            seen.insert(ev.summary)
+            return Lark.UpcomingEvent(summary: ev.summary, dateLabel: out.string(from: ev.start), start: ev.start)
+        }
+    }
 
-    func loadUpcomingEvents() {
+    func loadCalendar(force: Bool = false) {
+        if !force, let t = calFetchedAt, Date().timeIntervalSince(t) < 15 * 60 { return }
+        guard !calLoading, Lark.available else { return }
+        calLoading = true
         Task {
-            upcomingEvents = await Lark.upcomingEvents()
+            let events = await Lark.events(from: Date().addingTimeInterval(-7 * 86400),
+                                           to: Date().addingTimeInterval(7 * 86400))
+            if !events.isEmpty || force {
+                calEvents = events
+                CalCache.save(events)
+            }
+            calFetchedAt = Date()
+            calLoading = false
             refreshDerived()
         }
     }

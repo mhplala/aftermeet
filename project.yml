@@ -23,6 +23,7 @@ targets:
         PRODUCT_NAME: AfterMeet
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Aftermeet
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: 会中转写需要录制你的发言（音频仅在本机处理）。
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "把会中音频本地转写成文字"
         INFOPLIST_KEY_NSHumanReadableCopyright: ""

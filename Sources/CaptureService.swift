@@ -23,8 +23,10 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
     private let server = WhisperServer()
     private let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("aftermeet-window.wav")
 
-    private var window = [Float]()     // audioQueue
+    private var window = [Float]()     // audioQueue — 系统音频（对方的声音）
     private var rate: Double = 48_000  // audioQueue
+    private var micWindow = [Float]()  // audioQueue — 麦克风（你的声音，macOS 15+）
+    private var micRate: Double = 16_000
     private var committed = ""         // main
     private var inferring = false      // main
     private var emptyStreak = 0        // inferQueue
@@ -94,7 +96,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             await MainActor.run { self.status = "未找到 whisper-cli/模型（\(Whisper.cli)）"; self.isCapturing = false }
             return
         }
-        audioQueue.sync { self.window.removeAll() }
+        audioQueue.sync { self.window.removeAll(); self.micWindow.removeAll() }
         inferQueue.sync { self.emptyStreak = 0; self.lastSegment = "" }
         dbg("=== start ===", reset: true)
         let detected = LarkCalendar.currentMeetingName() ?? ""   // a suggestion only — not committed
@@ -114,9 +116,15 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             cfg.excludesCurrentProcessAudio = true
             cfg.width = 192; cfg.height = 108
             cfg.minimumFrameInterval = CMTime(value: 1, timescale: 2)
+            if #available(macOS 15.0, *) {
+                cfg.captureMicrophone = true          // 你的发言也进逐字稿（首次会弹麦克风授权）
+            }
 
             let s = SCStream(filter: filter, configuration: cfg, delegate: self)
             try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+            if #available(macOS 15.0, *) {
+                try? s.addStreamOutput(self, type: .microphone, sampleHandlerQueue: audioQueue)
+            }
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: videoQueue)
             try await s.startCapture()
             stream = s
@@ -165,7 +173,8 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
     // MARK: - Inference (inferQueue, blocking allowed)
 
     private func runInferenceSync(forceCommit: Bool, sessionElapsed: Int) {
-        let (snap, r) = audioQueue.sync { (self.window, self.rate) }
+        let (sysSnap, r, micSnap, mr) = audioQueue.sync { (self.window, self.rate, self.micWindow, self.micRate) }
+        let snap = Self.mix(sysSnap, r, micSnap, mr)   // 系统音频 + 麦克风 → 单路混音
         guard snap.count >= Int(1.0 * r) else { return }
 
         let tailN = min(snap.count, Int(0.6 * r))
@@ -175,7 +184,8 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         guard shouldCommit else { return }   // transcribe ONLY at a boundary → ~6× fewer server calls
 
         let trim = { self.audioQueue.async {
-            if snap.count <= self.window.count { self.window.removeFirst(snap.count) } else { self.window.removeAll() }
+            if sysSnap.count <= self.window.count { self.window.removeFirst(sysSnap.count) } else { self.window.removeAll() }
+            if micSnap.count <= self.micWindow.count { self.micWindow.removeFirst(micSnap.count) } else { self.micWindow.removeAll() }
         } }
 
         // 静音别喂：扫一遍整窗，凑不够人声帧就根本不调 whisper。whisper 在静音/无语音段会幻觉
@@ -231,6 +241,31 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         trim()
     }
 
+    /// 两路混音：采样率不同先线性重采样对齐，再逐样本相加并限幅。
+    /// 两路各自独立累积、每次消费后同时清空，漂移被窗口边界重置，ASR 足够。
+    private static func mix(_ sys: [Float], _ sysRate: Double, _ mic: [Float], _ micRate: Double) -> [Float] {
+        if mic.isEmpty { return sys }
+        var m = mic
+        if abs(sysRate - micRate) > 1, micRate > 0 {
+            let ratio = micRate / sysRate
+            let n = max(1, Int(Double(mic.count) / ratio))
+            m = (0..<n).map { i in
+                let x = Double(i) * ratio
+                let j = Int(x)
+                let s0 = mic[min(j, mic.count - 1)]
+                let s1 = mic[min(j + 1, mic.count - 1)]
+                return s0 + (s1 - s0) * Float(x - Double(j))
+            }
+        }
+        if sys.isEmpty { return m }
+        var out = [Float](repeating: 0, count: max(sys.count, m.count))
+        for i in out.indices {
+            let v = (i < sys.count ? sys[i] : 0) + (i < m.count ? m[i] : 0)
+            out[i] = max(-1, min(1, v))
+        }
+        return out
+    }
+
     /// Collapse consecutive identical sentences ("X。X。X。" → "X。") — whisper loops on low-info audio.
     private func collapseRepeats(_ text: String) -> String {
         var units: [String] = []
@@ -265,19 +300,25 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
     // MARK: - SCStreamOutput (audioQueue)
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio, sb.isValid,
+        var isMic = false
+        if #available(macOS 15.0, *), type == .microphone { isMic = true }
+        guard (type == .audio || isMic), sb.isValid,
               let asbd = sb.formatDescription?.audioStreamBasicDescription,
               let fmt = AVAudioFormat(standardFormatWithSampleRate: asbd.mSampleRate, channels: asbd.mChannelsPerFrame)
         else { return }
-        rate = asbd.mSampleRate
+        if isMic { micRate = asbd.mSampleRate } else { rate = asbd.mSampleRate }
         try? sb.withAudioBufferList { abl, _ in
             guard let pcm = AVAudioPCMBuffer(pcmFormat: fmt, bufferListNoCopy: abl.unsafePointer),
                   let ch = pcm.floatChannelData else { return }
-            self.window.append(contentsOf: UnsafeBufferPointer(start: ch[0], count: Int(pcm.frameLength)))
+            let samples = UnsafeBufferPointer(start: ch[0], count: Int(pcm.frameLength))
+            if isMic { self.micWindow.append(contentsOf: samples) }
+            else { self.window.append(contentsOf: samples) }
         }
         // hard cap — drop oldest audio so the window (and inference cost) can't run away
         let maxN = Int(maxWindowSeconds * rate)
         if window.count > maxN { window.removeFirst(window.count - maxN) }
+        let maxM = Int(maxWindowSeconds * micRate)
+        if micWindow.count > maxM { micWindow.removeFirst(micWindow.count - maxM) }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
