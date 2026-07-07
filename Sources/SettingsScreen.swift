@@ -331,7 +331,7 @@ struct SettingsScreen: View {
 
     /// 扫描本机模型：历史目录 + app 模型目录里的 ggml-*.bin
     private func scanModels() {
-        let dirs = ["/Users/steve/Dev/clip/work/models", ModelDownloader.dir.path]
+        let dirs = [NSHomeDirectory() + "/Dev/clip/work/models", ModelDownloader.dir.path]
         var found: [(String, String)] = []
         let fmt = ByteCountFormatter()
         for dir in dirs {

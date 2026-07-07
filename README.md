@@ -1,7 +1,7 @@
 # 会后秘书 AfterMeet — macOS app
 
-原生 SwiftUI。玻璃拟态视觉（光晕背景 + 磨砂框架 + 纯白工作区），冷墨 + 闭环绿。
-交互稿：`claude.ai/code/artifact/505d1ff5-005a-4383-a9b5-b35246aadb3f`（mock 可点）。
+macOS 原生会后秘书：会中本地实时转写（音频不出网）→ AI 生成式纪要 → 待办一键落成飞书任务 →
+会前自动追问上次进度。SwiftUI + SQLite/FTS5，Cal.com 式中性视觉。MIT License。
 
 ## 跑起来
 

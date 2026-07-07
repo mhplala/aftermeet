@@ -7,8 +7,17 @@ enum Whisper {
     // ggml-medium-q5_0 (multilingual, quantized) — better zh accuracy, fast enough resident.
     // Override via UserDefaults "whisperModel".
     static var model: String {
-        UserDefaults.standard.string(forKey: "whisperModel")
-            ?? "/Users/steve/Dev/clip/work/models/ggml-medium-q5_0.bin"
+        if let m = UserDefaults.standard.string(forKey: "whisperModel") { return m }
+        let appModels = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AfterMeet/models")
+        // 优先 app 模型目录（设置页下载的落这里），其次沿用历史开发路径
+        let candidates = [
+            appModels.appendingPathComponent("ggml-medium-q5_0.bin").path,
+            appModels.appendingPathComponent("ggml-large-v3-turbo-q5_0.bin").path,
+            appModels.appendingPathComponent("ggml-small.bin").path,
+            NSHomeDirectory() + "/Dev/clip/work/models/ggml-medium-q5_0.bin",
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) } ?? candidates[0]
     }
 
     static func available() -> Bool {
