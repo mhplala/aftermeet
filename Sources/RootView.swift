@@ -43,6 +43,7 @@ struct RootView: View {
         switch store.screen {
         case .home:     HomeScreen()
         case .library:  LibraryScreen()
+        case .calendar: CalendarScreen()
         case .detail:   DetailScreen()
         case .todos:    TodosScreen()
         case .followup: FollowupScreen()

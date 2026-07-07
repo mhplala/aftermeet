@@ -3,7 +3,7 @@ import Combine
 
 // MARK: - Enums
 
-enum Screen { case home, library, detail, todos, followup, weekly, daily }
+enum Screen { case home, library, calendar, detail, todos, followup, weekly, daily }
 enum TodoFilter { case all, open, overdue, done }
 enum DetailStatus { case pending, unclaimed, confirmed }
 enum CrossStatus { case overdue, doing, done }
@@ -226,6 +226,7 @@ final class AppStore: ObservableObject {
         // Dev affordance: `open AfterMeet.app --args -screen detail [-onboarding YES]`
         switch UserDefaults.standard.string(forKey: "screen") {
         case "library":  screen = .library
+        case "calendar": screen = .calendar
         case "detail":   screen = .detail
         case "todos":    screen = .todos
         case "followup": screen = .followup
@@ -267,12 +268,13 @@ final class AppStore: ObservableObject {
     /// A live-captured transcript came back — refine it, then drop the result in as a real meeting.
     func ingestLive(transcript: String, durationSec: Int) {
         refining = true
+        let stopped = Date()                       // 停录时刻（提炼要几十秒，别把时间戳推迟）
         Task {
             do {
                 let note = try await Refine.note(from: transcript)
                 let userName = capture.meetingName.trimmingCharacters(in: .whitespaces)
                 if userName.isEmpty { capture.setMeetingName(note.title) }   // 豆包 names the file by content
-                let now = Date()
+                let now = stopped
                 let title = userName.isEmpty ? note.title : userName
                 LiveStore.append(StoredLiveMeeting(                          // persist → survives a restart
                     id: "live-\(Int(now.timeIntervalSince1970))", title: title,
@@ -473,8 +475,9 @@ final class AppStore: ObservableObject {
         guard let ts = Double(m.id.dropFirst("live-".count)) else { return }
         Task {
             let dur = LiveStore.load().first { $0.id == m.id }?.durationSec ?? 600
-            let candidates = await Lark.eventsOverlapping(start: Date(timeIntervalSince1970: ts),
-                                                          durationSec: dur)
+            // 存的时间戳是停录时刻 → 录音区间是 [ts - 时长, ts]
+            let recStart = Date(timeIntervalSince1970: ts - Double(dur))
+            let candidates = await Lark.eventsOverlapping(start: recStart, durationSec: dur)
             guard let ev = candidates.first else { return }
             let evNorm = AppStore.normalizedTitle(ev.summary)
             let curNorm = AppStore.normalizedTitle(m.title)

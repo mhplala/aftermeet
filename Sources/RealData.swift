@@ -286,11 +286,13 @@ extension MeetingVM {
     }
 
     /// Build a meeting from a locally-captured + refined live session.
+    /// `now` 是停录/落盘时刻（id 用它，保持稳定）；显示与匹配用真正的开始时间。
     init(live note: RefinedNote, transcript: String, durationSec: Int, now: Date, title: String? = nil) {
         let df = DateFormatter()
         df.locale = Locale(identifier: "zh_CN")
         df.dateFormat = "M月d日 EEE HH:mm"
-        let dateStr = df.string(from: now)
+        let started = now.addingTimeInterval(-Double(max(durationSec, 0)))
+        let dateStr = df.string(from: started)
         let dur = String(format: "%d:%02d", durationSec / 60, durationSec % 60)
 
         self.id = "live-\(Int(now.timeIntervalSince1970))"

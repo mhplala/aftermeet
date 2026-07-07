@@ -18,6 +18,8 @@ struct Sidebar: View {
             group("会议")
             NavItem(icon: "books.vertical", label: "会议库", badge: "\(store.meetings.count)",
                     active: store.screen == .library || store.screen == .detail) { store.go(.library) }
+            NavItem(icon: "calendar", label: "日历",
+                    active: store.screen == .calendar) { store.go(.calendar) }
 
             group("跟进")
             NavItem(icon: "checklist", label: "待办中心", badge: "\(store.openCount)",
