@@ -73,8 +73,8 @@ struct Sidebar: View {
                     .fill(Theme.inkGrad)
                     .frame(width: 30, height: 30)
                     .glow(Color.black, radius: 8, opacity: 0.25)
-                Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .bold))
+                Image(systemName: "waveform")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
             }
             Text("Aftermeet")
@@ -85,48 +85,43 @@ struct Sidebar: View {
     }
 
     private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle().fill(Theme.accentGlow.opacity(0.22)).frame(width: 13, height: 13)
-                    Circle().fill(Theme.accentGlow).frame(width: 7, height: 7)
-                        .glow(Theme.accentGlow, radius: 6, opacity: 0.8)
-                }
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Circle().fill(Theme.accentGlow).frame(width: 7, height: 7)
                 Text(store.sync.syncing ? "正在同步飞书会议…" : "自动记录已开启")
-                    .font(Theme.mono(10))
-                    .foregroundColor(Theme.onDarkDim)
+                    .font(Theme.ui(11.5, .medium))
+                    .foregroundColor(Theme.inkPrimary)
+                Spacer()
             }
-            Text("会议自动转写，飞书纪要每 15 分钟自动同步。")
-                .font(Theme.ui(12))
-                .foregroundColor(Theme.onDarkDim)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
+            Text("飞书纪要每 15 分钟自动同步")
+                .font(Theme.ui(11))
+                .foregroundColor(Theme.inkTertiary)
             HStack {
                 Button { store.syncNow() } label: {
                     Text("立即同步")
-                        .font(Theme.mono(10, .semibold))
-                        .foregroundColor(Theme.onDark)
+                        .font(Theme.ui(10.5, .semibold))
+                        .foregroundColor(Theme.inkSecondary)
                         .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Color.white.opacity(0.14))
+                        .background(Theme.warmWhite)
                         .clipShape(Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                        .overlay(Capsule().strokeBorder(Theme.borderWhisper, lineWidth: 1))
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .disabled(store.sync.syncing)
                 Spacer()
                 if !store.sync.lastSyncLabel.isEmpty {
                     Text(store.sync.lastSyncLabel)
-                        .font(Theme.mono(9)).foregroundColor(Theme.onDarkDim)
+                        .font(Theme.mono(9)).foregroundColor(Theme.inkMuted)
                 }
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.inkGlass)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.22), radius: 12, x: 0, y: 7)
+        .background(Color.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous)
+            .strokeBorder(Theme.borderWhisper, lineWidth: 1))
     }
 }
 
