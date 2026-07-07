@@ -16,6 +16,7 @@ struct DetailScreen: View {
                     breadcrumb
                     titleRow
                     metaRow
+                    if let suggestion = store.calendarSuggestions[m.id] { renameChip(suggestion) }
                     NoteBlocksView(blocks: m.displayBlocks).padding(.top, 4)
                     todosSection
                     transcriptSection
@@ -28,6 +29,31 @@ struct DetailScreen: View {
             }
             actionBar
         }
+        .task(id: m.id) { store.checkCalendarName(for: m) }
+    }
+
+    /// 时间戳 × 日历命中了别的名字 → 给一条可采用的改名建议
+    private func renameChip(_ suggestion: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar").font(.system(size: 11)).foregroundColor(Theme.blue700)
+            Text("日历中该时段是「\(suggestion)」")
+                .font(Theme.ui(12)).foregroundColor(Theme.blue700).lineLimit(1)
+            Button { store.adoptCalendarName(id: m.id) } label: {
+                Text("改用此名").font(Theme.ui(11.5, .semibold)).foregroundColor(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Theme.blue500).clipShape(Capsule())
+                    .contentShape(Capsule())
+            }.buttonStyle(.plain)
+            Button { store.calendarSuggestions[m.id] = nil } label: {
+                Text("忽略").font(Theme.ui(11.5)).foregroundColor(Theme.inkTertiary)
+                    .padding(.horizontal, 6).padding(.vertical, 4)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Theme.blue50)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 
     // MARK: header

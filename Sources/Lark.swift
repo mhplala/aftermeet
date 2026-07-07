@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// 飞书侧的真实写入/查询 —— 全部经 lark-cli（用户身份），app 里不落任何凭证。
 /// 所有调用都是 best-effort：CLI 不在、scope 不够都走 LarkError，由调用方给用户诚实反馈。
@@ -43,33 +44,66 @@ enum Lark {
         return openID
     }
 
-    // MARK: - 日历：未来 7 天的日程（会前追问的 ground truth）
+    // MARK: - 日历：日程读取（会前追问 ground truth / 时间戳猜会议名）
 
-    struct UpcomingEvent { let summary: String; let dateLabel: String }
+    struct CalEvent { let summary: String; let start: Date; let end: Date }
+    struct UpcomingEvent { let summary: String; let dateLabel: String; let start: Date }
+
+    /// 一段时间内的日程（过滤 placeholder / cowork / 全天占位）。
+    static func events(from: Date, to: Date) async -> [CalEvent] {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        guard let json = await runJSON(["calendar", "+agenda",
+                                        "--start", f.string(from: from),
+                                        "--end", f.string(from: to)], timeout: 45),
+              let items = json["data"] as? [[String: Any]] else { return [] }
+        let iso = ISO8601DateFormatter()
+        return items.compactMap { it in
+            guard let summary = (it["summary"] as? String)?.trimmingCharacters(in: .whitespaces),
+                  !summary.isEmpty else { return nil }
+            let low = summary.lowercased()
+            if low.contains("placeholder") || low.contains("cowork") || low.contains("co-work") { return nil }
+            guard let st = ((it["start_time"] as? [String: Any])?["datetime"] as? String).flatMap({ iso.date(from: $0) }),
+                  let et = ((it["end_time"] as? [String: Any])?["datetime"] as? String).flatMap({ iso.date(from: $0) })
+            else { return nil }
+            if et.timeIntervalSince(st) > 4 * 3600 { return nil }   // 超长占位块不算一场会
+            return CalEvent(summary: summary, start: st, end: et)
+        }
+    }
 
     static func upcomingEvents(days: Int = 7) async -> [UpcomingEvent] {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-        let start = f.string(from: Date())
-        let end = f.string(from: Date().addingTimeInterval(Double(days) * 86400))
-        guard let json = await runJSON(["calendar", "+agenda", "--start", start, "--end", end], timeout: 45),
-              let items = json["data"] as? [[String: Any]] else { return [] }
-
-        let iso = ISO8601DateFormatter()
         let out = DateFormatter(); out.locale = Locale(identifier: "zh_CN"); out.dateFormat = "M月d日 EEE HH:mm"
         var seen = Set<String>()
-        var events: [UpcomingEvent] = []
-        for it in items {
-            guard let summary = (it["summary"] as? String)?.trimmingCharacters(in: .whitespaces),
-                  !summary.isEmpty else { continue }
-            let low = summary.lowercased()
-            if low.contains("placeholder") || low.contains("cowork") || low.contains("co-work") { continue }
-            let st = ((it["start_time"] as? [String: Any])?["datetime"] as? String).flatMap { iso.date(from: $0) }
-            guard let start = st, start > Date() else { continue }        // 只要还没开的
-            guard !seen.contains(summary) else { continue }               // 重复日程取最近一场
-            seen.insert(summary)
-            events.append(UpcomingEvent(summary: summary, dateLabel: out.string(from: start)))
+        var upcoming: [UpcomingEvent] = []
+        for ev in await events(from: Date(), to: Date().addingTimeInterval(Double(days) * 86400)) {
+            guard ev.start > Date(), !seen.contains(ev.summary) else { continue }
+            seen.insert(ev.summary)
+            upcoming.append(UpcomingEvent(summary: ev.summary, dateLabel: out.string(from: ev.start), start: ev.start))
         }
-        return events
+        return upcoming
+    }
+
+    /// 时间戳猜会议：录音区间 [start, start+dur] 和日历日程求重叠，
+    /// 重叠 ≥5 分钟（或录音一半以上）才算，多个命中取重叠最长的。
+    static func eventOverlapping(start recStart: Date, durationSec: Int) async -> CalEvent? {
+        let recEnd = recStart.addingTimeInterval(Double(max(durationSec, 60)))
+        let dayEvents = await events(from: recStart.addingTimeInterval(-86400),
+                                     to: recEnd.addingTimeInterval(86400))
+        let minOverlap = min(300.0, Double(durationSec) * 0.5)
+        var best: (CalEvent, TimeInterval)? = nil
+        for ev in dayEvents {
+            let overlap = min(ev.end, recEnd).timeIntervalSince(max(ev.start, recStart))
+            guard overlap >= minOverlap else { continue }
+            if best == nil || overlap > best!.1 { best = (ev, overlap) }
+        }
+        return best?.0
+    }
+
+    /// 打开飞书日历（applink 拉起客户端，落到指定日期的日视图）。
+    static func openCalendar(at date: Date) {
+        let ts = Int(date.timeIntervalSince1970)
+        if let url = URL(string: "https://applink.feishu.cn/client/calendar/view?type=day&date=\(ts)") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: - 建任务

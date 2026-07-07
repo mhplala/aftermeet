@@ -175,6 +175,10 @@ final class AppStore: ObservableObject {
     // 搜索跳到待办中心时闪一下目标行
     @Published var flashTodoText: String? = nil
 
+    // 时间戳 × 日历猜出来的改名建议：meetingID → 日历日程名
+    @Published var calendarSuggestions: [String: String] = [:]
+    private var calendarChecked = Set<String>()
+
     // 纪要问答 — per-meeting Q&A grounded in its transcript.
     @Published var qaThreads: [String: [QATurn]] = QAStore.load()
     @Published var qaPending: Set<String> = []
@@ -438,6 +442,49 @@ final class AppStore: ObservableObject {
         dtodos = current.dtodos
     }
 
+    // MARK: - 时间戳 × 日历：猜这段录音属于哪场会，给改名建议
+
+    /// 泛泛标题（模型没起好名）→ 日历命中时直接自动改名，否则只挂建议。
+    static func isGenericTitle(_ t: String) -> Bool {
+        t.isEmpty || t == "未命名会议" || t == "会中纪要"
+            || t.hasPrefix("简体中文") || t.hasPrefix("会议") || t.count <= 4
+    }
+
+    func checkCalendarName(for m: MeetingVM) {
+        guard m.id.hasPrefix("live-"), !calendarChecked.contains(m.id), Lark.available else { return }
+        calendarChecked.insert(m.id)
+        guard let ts = Double(m.id.dropFirst("live-".count)) else { return }
+        Task {
+            let dur = LiveStore.load().first { $0.id == m.id }?.durationSec ?? 600
+            guard let ev = await Lark.eventOverlapping(start: Date(timeIntervalSince1970: ts),
+                                                       durationSec: dur) else { return }
+            let evNorm = AppStore.normalizedTitle(ev.summary)
+            let curNorm = AppStore.normalizedTitle(m.title)
+            guard !AppStore.sameSeries(evNorm, curNorm) else { return }   // 名字已经对上，不打扰
+            if AppStore.isGenericTitle(m.title) {
+                renameMeeting(id: m.id, to: ev.summary)
+                showToast("已按日历改名：\(ev.summary)")
+            } else {
+                calendarSuggestions[m.id] = ev.summary
+            }
+        }
+    }
+
+    func adoptCalendarName(id: String) {
+        guard let name = calendarSuggestions[id] else { return }
+        renameMeeting(id: id, to: name)
+        calendarSuggestions[id] = nil
+        showToast("已改名：\(name)")
+    }
+
+    func renameMeeting(id: String, to title: String) {
+        guard let i = meetings.firstIndex(where: { $0.id == id }) else { return }
+        meetings[i].title = title
+        LiveStore.rename(id: id, title: title)
+        ctodos = AppStore.deriveCrossTodos(from: meetings)   // 待办里的会议标签同步
+        if i == selectedMeeting { dtodos = current.dtodos }
+    }
+
     /// 录制条完成态被点击 → 打开刚生成的纪要
     func openFreshLive() {
         guard let id = freshLiveID else { return }
@@ -637,6 +684,7 @@ final class AppStore: ObservableObject {
         let prevMeta: String
         let items: [FollowItem]
         var upcomingLabel: String? = nil   // 日历里下一场的时间（交叉比对命中时有值）
+        var upcomingDate: Date? = nil      // 点击跳飞书日历用
     }
 
     // 未来 7 天日历日程，启动时拉一次（会前追问的 ground truth）
@@ -687,7 +735,7 @@ final class AppStore: ObservableObject {
             let items = followItems(from: prev)
             guard !items.isEmpty else { continue }
             return RecurringCard(title: ev.summary, prevMeta: prev.recentMeta,
-                                 items: items, upcomingLabel: ev.dateLabel)
+                                 items: items, upcomingLabel: ev.dateLabel, upcomingDate: ev.start)
         }
 
         // 兜底：库内两场同系列（严格匹配）

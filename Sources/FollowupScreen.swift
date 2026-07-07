@@ -82,6 +82,18 @@ struct FollowupScreen: View {
                     .font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()
+            if let date = real?.upcomingDate {
+                Button { Lark.openCalendar(at: date) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar").font(.system(size: 11))
+                        Text("在飞书日历查看").font(Theme.ui(12, .semibold))
+                    }
+                    .foregroundColor(Theme.blue700)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(Theme.blue50).clipShape(Capsule())
+                    .contentShape(Capsule())
+                }.buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 24).padding(.vertical, 20)
     }

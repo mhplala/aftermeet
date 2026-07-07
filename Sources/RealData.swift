@@ -137,6 +137,15 @@ enum LiveStore {
             (try? JSONSerialization.data(withJSONObject: obj)).flatMap { try? dec.decode(StoredLiveMeeting.self, from: $0) }
         }
     }
+    static func rename(id: String, title: String) {
+        let items = load().map { m -> StoredLiveMeeting in
+            guard m.id == id else { return m }
+            return StoredLiveMeeting(id: m.id, title: title, timestamp: m.timestamp,
+                                     durationSec: m.durationSec, transcript: m.transcript, note: m.note)
+        }
+        if let data = try? JSONEncoder().encode(items) { try? data.write(to: fileURL) }
+    }
+
     static func append(_ m: StoredLiveMeeting) {
         var items = load()
         items.append(m)
@@ -193,7 +202,7 @@ enum QAStore {
 
 struct MeetingVM: Identifiable {
     let id: String
-    let title: String
+    var title: String
     let badge: String
     let metaParts: [String]
     let metaAccent: String
