@@ -456,16 +456,18 @@ final class AppStore: ObservableObject {
         guard let ts = Double(m.id.dropFirst("live-".count)) else { return }
         Task {
             let dur = LiveStore.load().first { $0.id == m.id }?.durationSec ?? 600
-            guard let ev = await Lark.eventOverlapping(start: Date(timeIntervalSince1970: ts),
-                                                       durationSec: dur) else { return }
+            let candidates = await Lark.eventsOverlapping(start: Date(timeIntervalSince1970: ts),
+                                                          durationSec: dur)
+            guard let ev = candidates.first else { return }
             let evNorm = AppStore.normalizedTitle(ev.summary)
             let curNorm = AppStore.normalizedTitle(m.title)
             guard !AppStore.sameSeries(evNorm, curNorm) else { return }   // 名字已经对上，不打扰
-            if AppStore.isGenericTitle(m.title) {
+            if candidates.count == 1 || AppStore.isGenericTitle(m.title) {
+                // 该时段日历里只有这一场（或现名本来就是占位）→ 直接改，不打扰用户
                 renameMeeting(id: m.id, to: ev.summary)
                 showToast("已按日历改名：\(ev.summary)")
             } else {
-                calendarSuggestions[m.id] = ev.summary
+                calendarSuggestions[m.id] = ev.summary   // 同时段多场会 → 给建议，用户拍板
             }
         }
     }

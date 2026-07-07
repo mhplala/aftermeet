@@ -83,19 +83,17 @@ enum Lark {
     }
 
     /// 时间戳猜会议：录音区间 [start, start+dur] 和日历日程求重叠，
-    /// 重叠 ≥5 分钟（或录音一半以上）才算，多个命中取重叠最长的。
-    static func eventOverlapping(start recStart: Date, durationSec: Int) async -> CalEvent? {
+    /// 重叠 ≥5 分钟（或录音一半以上）才算，按重叠时长降序返回全部候选。
+    static func eventsOverlapping(start recStart: Date, durationSec: Int) async -> [CalEvent] {
         let recEnd = recStart.addingTimeInterval(Double(max(durationSec, 60)))
         let dayEvents = await events(from: recStart.addingTimeInterval(-86400),
                                      to: recEnd.addingTimeInterval(86400))
         let minOverlap = min(300.0, Double(durationSec) * 0.5)
-        var best: (CalEvent, TimeInterval)? = nil
-        for ev in dayEvents {
-            let overlap = min(ev.end, recEnd).timeIntervalSince(max(ev.start, recStart))
-            guard overlap >= minOverlap else { continue }
-            if best == nil || overlap > best!.1 { best = (ev, overlap) }
-        }
-        return best?.0
+        return dayEvents
+            .map { ($0, min($0.end, recEnd).timeIntervalSince(max($0.start, recStart))) }
+            .filter { $0.1 >= minOverlap }
+            .sorted { $0.1 > $1.1 }
+            .map { $0.0 }
     }
 
     /// 打开飞书日历（applink 拉起客户端，落到指定日期的日视图）。
