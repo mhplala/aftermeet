@@ -35,7 +35,7 @@ enum Whisper {
         p.arguments = args
         let out = Pipe()
         p.standardOutput = out
-        p.standardError = Pipe()
+        p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()

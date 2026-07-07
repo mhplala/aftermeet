@@ -7,6 +7,8 @@ import SQLite3
 final class DB {
     static let shared = DB()
 
+    /// open 失败时为 false —— 上层据此走兜底（而不是无声丢数据）
+    private(set) var healthy = true
     private var handle: OpaquePointer?
     private let q = DispatchQueue(label: "aftermeet.db")   // 串行队列，所有访问排队
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -21,7 +23,9 @@ final class DB {
     private init() {
         q.sync {
             guard sqlite3_open(Self.fileURL.path, &handle) == SQLITE_OK else {
+                if let h = handle { sqlite3_close(h) }   // open 失败也会返回 handle，要关掉
                 handle = nil
+                healthy = false
                 return
             }
             execLocked("PRAGMA journal_mode=WAL")
@@ -55,14 +59,16 @@ final class DB {
         return sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK
     }
 
-    /// 预编译 + 绑定 + 执行（无结果集）。binds 支持 String / Double / Int / nil。
-    private func runLocked(_ sql: String, _ binds: [Any?] = []) {
-        guard let handle else { return }
+    /// 预编译 + 绑定 + 执行（无结果集）。binds 支持 String / Double / Int / nil。失败返回 false。
+    @discardableResult
+    private func runLocked(_ sql: String, _ binds: [Any?] = []) -> Bool {
+        guard let handle else { return false }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, binds)
-        sqlite3_step(stmt)
+        let rc = sqlite3_step(stmt)
+        return rc == SQLITE_DONE || rc == SQLITE_ROW
     }
 
     /// 查询：每行回调各列文本（NULL → nil）。
@@ -99,16 +105,21 @@ final class DB {
 
     struct FTSDoc { let title: String; let summary: String; let transcript: String }
 
-    func upsertMeeting(id: String, kind: String, sortTs: Double, payload: String, fts: FTSDoc) {
+    /// 事务化 upsert：任一步失败 → ROLLBACK 并返回 false（磁盘满/句柄坏都不留半事务）。
+    @discardableResult
+    func upsertMeeting(id: String, kind: String, sortTs: Double, payload: String, fts: FTSDoc) -> Bool {
+        var ok = false
         q.sync {
-            execLocked("BEGIN")
-            runLocked("INSERT OR REPLACE INTO meetings(id,kind,sort_ts,payload) VALUES(?,?,?,?)",
-                      [id, kind, sortTs, payload])
-            runLocked("DELETE FROM meetings_fts WHERE id=?", [id])
-            runLocked("INSERT INTO meetings_fts(id,title,summary,transcript) VALUES(?,?,?,?)",
-                      [id, fts.title, fts.summary, fts.transcript])
-            execLocked("COMMIT")
+            guard execLocked("BEGIN") else { return }
+            ok = runLocked("INSERT OR REPLACE INTO meetings(id,kind,sort_ts,payload) VALUES(?,?,?,?)",
+                           [id, kind, sortTs, payload])
+                && runLocked("DELETE FROM meetings_fts WHERE id=?", [id])
+                && runLocked("INSERT INTO meetings_fts(id,title,summary,transcript) VALUES(?,?,?,?)",
+                             [id, fts.title, fts.summary, fts.transcript])
+            if ok { ok = execLocked("COMMIT"); if !ok { execLocked("ROLLBACK") } }
+            else { execLocked("ROLLBACK") }
         }
+        return ok
     }
 
     func meetingPayloads(kind: String) -> [(id: String, payload: String)] {
@@ -121,22 +132,27 @@ final class DB {
         return out
     }
 
-    /// 全量替换某一类会议（飞书同步用：语义 = 写整份 meetings.json）。
-    func replaceMeetings(kind: String, rows: [(id: String, sortTs: Double, payload: String, fts: FTSDoc)]) {
+    /// 全量替换某一类会议。任一步失败整体 ROLLBACK —— 绝不提交"删了没插回"的半事务。
+    @discardableResult
+    func replaceMeetings(kind: String, rows: [(id: String, sortTs: Double, payload: String, fts: FTSDoc)]) -> Bool {
+        var ok = false
         q.sync {
-            execLocked("BEGIN")
+            guard execLocked("BEGIN") else { return }
+            var good = true
             var oldIDs: [String] = []
             queryLocked("SELECT id FROM meetings WHERE kind=?", [kind]) { if let id = $0[0] { oldIDs.append(id) } }
-            for id in oldIDs { runLocked("DELETE FROM meetings_fts WHERE id=?", [id]) }
-            runLocked("DELETE FROM meetings WHERE kind=?", [kind])
-            for r in rows {
-                runLocked("INSERT INTO meetings(id,kind,sort_ts,payload) VALUES(?,?,?,?)",
-                          [r.id, kind, r.sortTs, r.payload])
-                runLocked("INSERT INTO meetings_fts(id,title,summary,transcript) VALUES(?,?,?,?)",
-                          [r.id, r.fts.title, r.fts.summary, r.fts.transcript])
+            for id in oldIDs where good { good = runLocked("DELETE FROM meetings_fts WHERE id=?", [id]) }
+            if good { good = runLocked("DELETE FROM meetings WHERE kind=?", [kind]) }
+            for r in rows where good {
+                good = runLocked("INSERT INTO meetings(id,kind,sort_ts,payload) VALUES(?,?,?,?)",
+                                 [r.id, kind, r.sortTs, r.payload])
+                    && runLocked("INSERT INTO meetings_fts(id,title,summary,transcript) VALUES(?,?,?,?)",
+                                 [r.id, r.fts.title, r.fts.summary, r.fts.transcript])
             }
-            execLocked("COMMIT")
+            if good { ok = execLocked("COMMIT"); if !ok { execLocked("ROLLBACK") } }
+            else { execLocked("ROLLBACK") }
         }
+        return ok
     }
 
     /// 会议全文检索：全部关键词 ≥3 字时走 FTS5(trigram) 索引；否则 LIKE 扫描（当前量级毫秒）。

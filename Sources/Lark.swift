@@ -181,24 +181,37 @@ enum Lark {
             p.standardOutput = out
             p.standardError = FileHandle.nullDevice     // 没人读的 stderr 管道满了会憋死进程
 
-            // 边跑边读：输出超过 64KB 管道缓冲（14 天日程 ~200KB）时，
-            // “等退出再读”会互相卡死到超时 —— 必须并发接流。
+            // 单一 reader 边跑边读（输出可达几百 KB，超 64KB 管道缓冲）；
+            // EOF（availableData 为空）时发信号 —— 不再用 readToEnd 收尾，
+            // 避免"terminate 后写端不关、readToEnd 永久阻塞"把调用方卡死。
             var buf = Data()
             let lock = NSLock()
+            let eof = DispatchSemaphore(value: 0)
             out.fileHandleForReading.readabilityHandler = { h in
                 let d = h.availableData
-                if !d.isEmpty { lock.lock(); buf.append(d); lock.unlock() }
+                if d.isEmpty {
+                    h.readabilityHandler = nil
+                    eof.signal()
+                } else {
+                    lock.lock(); buf.append(d); lock.unlock()
+                }
             }
 
-            do { try p.run() } catch { return nil }
+            do { try p.run() } catch {
+                out.fileHandleForReading.readabilityHandler = nil
+                return nil
+            }
             let deadline = Date().addingTimeInterval(timeout)
             while p.isRunning && Date() < deadline { usleep(100_000) }
-            if p.isRunning { p.terminate() }
-
-            out.fileHandleForReading.readabilityHandler = nil
-            if let rest = try? out.fileHandleForReading.readToEnd(), !rest.isEmpty {
-                lock.lock(); buf.append(rest); lock.unlock()
+            if p.isRunning {
+                p.terminate()
+                let killAt = Date().addingTimeInterval(2)
+                while p.isRunning && Date() < killAt { usleep(50_000) }
+                if p.isRunning { kill(p.processIdentifier, SIGKILL) }   // 不理 SIGTERM 的直接杀
             }
+            // 等 reader 收到 EOF（最多 2s，防止孤儿子进程占着写端不放）
+            _ = eof.wait(timeout: .now() + 2)
+            out.fileHandleForReading.readabilityHandler = nil
             lock.lock(); let data = buf; lock.unlock()
             return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         }.value

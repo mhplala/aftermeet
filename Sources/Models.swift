@@ -49,6 +49,7 @@ struct CrossTodo: Identifiable {
     let due: String
     var status: CrossStatus
     var wasBeforeDone: CrossStatus? = nil
+    var key: String = ""            // meetingID|todoID —— 完成态的持久键（样例数据为空）
 
     static let sample: [CrossTodo] = [
         .init(id: 1, text: "完成纪要卡片折叠态前端联调", meeting: "周三产品评审会 · 6/10",
@@ -168,6 +169,10 @@ final class AppStore: ObservableObject {
     // 会议库 tab（纪要 / 原始转写），同样跨跳转保留
     @Published var libraryRawTab = false
 
+    // start/stop 幂等门：多入口（面板/菜单栏/自动检测）并发触发时只放行一次
+    private var startInFlight = false
+    private var stopInFlight = false
+
     // 录制条（顶栏常驻）：面板开合 + 刚生成完的纪要（完成态，点击才跳）
     @Published var showRecPanel = false
     @Published var freshLiveID: String? = nil
@@ -206,12 +211,59 @@ final class AppStore: ObservableObject {
     @Published var userName = ""
     var userInitial: String { String(userName.prefix(1)) }
 
-    // 已在飞书真实建卡的待办：meetingID|todoID → task guid（防重复建）。
+    // 已在飞书真实建卡的待办：meetingID|todoID → task guid（防重复建；同时是"已确认"的持久真源）。
     @Published var taskLinks: [String: String] = TaskLinkStore.load()
+
+    // 待办中心手动勾掉的完成态（meetingID|todoID），持久化 —— 重新派生列表时不清零。
+    @Published var doneTodoKeys: Set<String> = {
+        guard let s = DB.shared.kvGet("done_todos"),
+              let arr = try? JSONDecoder().decode([String].self, from: Data(s.utf8)) else { return [] }
+        return Set(arr)
+    }()
+    private func saveDoneKeys() {
+        if let d = try? JSONEncoder().encode(Array(doneTodoKeys)), let s = String(data: d, encoding: .utf8) {
+            DB.shared.kvSet("done_todos", s)
+        }
+    }
+
+    /// 详情页待办叠加持久确认态（selectMeeting 拷贝出来的 dtodos 不再"切走即失忆"）。
+    private func applyConfirmations(_ todos: [DetailTodo], meetingID: String) -> [DetailTodo] {
+        todos.map { t in
+            var t = t
+            if taskLinks["\(meetingID)|\(t.id)"] != nil { t.status = .confirmed }
+            return t
+        }
+    }
+
+    /// meetings/持久态变化后重建两份派生列表。
+    func rederiveTodos() {
+        ctodos = deriveCrossTodosApplied()
+        dtodos = applyConfirmations(current.dtodos, meetingID: current.id)
+    }
+
+    private func deriveCrossTodosApplied() -> [CrossTodo] {
+        var out: [CrossTodo] = []
+        var id = 1
+        for mv in meetings {
+            for t in applyConfirmations(mv.dtodos, meetingID: mv.id) {
+                let key = "\(mv.id)|\(t.id)"
+                let label = mv.dayChip == "·" ? mv.title : "\(mv.title) · \(mv.dayChip)"
+                let done = t.status == .confirmed || doneTodoKeys.contains(key)
+                let status: CrossStatus = done ? .done
+                    : (Self.overdueDays(due: t.due) ?? 0) > 0 ? .overdue : .doing
+                out.append(CrossTodo(id: id, text: t.text, meeting: label,
+                                     owner: t.owner ?? "待认领", initial: t.initial, color: t.color,
+                                     due: t.due, status: status, key: key))
+                id += 1
+            }
+        }
+        return out
+    }
 
     var current: MeetingVM { meetings.isEmpty ? .sample : meetings[min(max(0, selectedMeeting), meetings.count - 1)] }
 
     private var toastWork: DispatchWorkItem?
+    private var flashWork: DispatchWorkItem?
     private var syncForward: AnyCancellable?
 
     init() {
@@ -226,7 +278,7 @@ final class AppStore: ObservableObject {
         usingRealData = !all.isEmpty
         meetings = all.isEmpty ? [MeetingVM.sample] : all
         dtodos = meetings[0].dtodos
-        if !all.isEmpty { ctodos = AppStore.deriveCrossTodos(from: meetings) }
+        if !all.isEmpty { rederiveTodos() }
 
         // Dev affordance: `open AfterMeet.app --args -screen detail [-onboarding YES]`
         switch UserDefaults.standard.string(forKey: "screen") {
@@ -260,15 +312,15 @@ final class AppStore: ObservableObject {
         usingRealData = true
         let liveCount = meetings.prefix(while: { $0.id.hasPrefix("live-") }).count
         meetings.insert(contentsOf: vms, at: liveCount)
-        ctodos = AppStore.deriveCrossTodos(from: meetings)
-        dtodos = current.dtodos
+        if selectedMeeting >= liveCount { selectedMeeting += vms.count }   // 正在看的那场别被顶换
+        rederiveTodos()
         refreshDerived()
         showToast("已同步 \(vms.count) 场新会议")
     }
 
     func selectMeeting(_ i: Int) {
         selectedMeeting = i
-        dtodos = current.dtodos
+        dtodos = applyConfirmations(current.dtodos, meetingID: current.id)
         go(.detail)
     }
 
@@ -284,10 +336,11 @@ final class AppStore: ObservableObject {
                 let now = stopped
                 let title = userName.isEmpty ? note.title : userName
                 let storedID = "live-\(Int(now.timeIntervalSince1970))"
-                LiveStore.append(StoredLiveMeeting(                          // persist → survives a restart
+                let persisted = LiveStore.append(StoredLiveMeeting(          // persist → survives a restart
                     id: storedID, title: title,
                     timestamp: now.timeIntervalSince1970, durationSec: durationSec,
                     transcript: transcript, note: note))
+                if !persisted { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
                 liveDurations[storedID] = durationSec
                 let vm = MeetingVM(live: note, transcript: transcript, durationSec: durationSec,
                                    now: now, title: title)
@@ -307,9 +360,8 @@ final class AppStore: ObservableObject {
         usingRealData = true
         let wasEmpty = meetings.isEmpty
         meetings.insert(vm, at: 0)
-        ctodos = AppStore.deriveCrossTodos(from: meetings)
-        if wasEmpty { selectedMeeting = 0; dtodos = vm.dtodos }
-        else { selectedMeeting += 1 }                // 保持用户正看的那场不被顶掉
+        if wasEmpty { selectedMeeting = 0 } else { selectedMeeting += 1 }   // 保持用户正看的那场不被顶掉
+        rederiveTodos()
         refreshDerived()
     }
 
@@ -326,39 +378,45 @@ final class AppStore: ObservableObject {
     func setAutoStart(_ on: Bool) {
         autoStart = on
         UserDefaults.standard.set(on, forKey: "autoStart")
-        if on && meetingActive && !capture.isCapturing {     // already mid-meeting → start now
-            Task { await capture.start() }
-        }
+        if on && meetingActive { beginCapture(openPanel: false) }   // already mid-meeting → start now
     }
 
     private func handleMeeting(_ active: Bool) {
         meetingActive = active
         if active {
-            if autoStart && !capture.isCapturing {
-                Task { await capture.start() }
-            }
-        } else if capture.isCapturing {
-            Task {
-                let text = await capture.stop()
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
-                    ingestLive(transcript: text, durationSec: capture.elapsed)
-                }
-            }
+            if autoStart { beginCapture(openPanel: false) }
+        } else {
+            endCapture()
         }
     }
 
-    /// Start (→ live) or stop (→ refine & ingest) capture — shared by LiveScreen and the menu-bar item.
+    /// Start (→ panel) or stop (→ refine & ingest) — shared by the rec strip, panel, and menu bar.
     func toggleCapture() {
-        if capture.isCapturing {
-            Task {
-                let text = await capture.stop()
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
-                    ingestLive(transcript: text, durationSec: capture.elapsed)
-                }
+        if capture.isCapturing { endCapture() } else { beginCapture(openPanel: true) }
+    }
+
+    /// 幂等 start：面板按钮 / 菜单栏 / 自动检测同拍触发也只起一条流。
+    private func beginCapture(openPanel: Bool) {
+        guard !capture.isCapturing, !startInFlight, !stopInFlight else { return }
+        startInFlight = true
+        freshLiveID = nil            // 上一场的"纪要已生成"完成态让位给新录制
+        if openPanel { showRecPanel = true }
+        Task {
+            await capture.start()
+            startInFlight = false
+        }
+    }
+
+    /// 幂等 stop：stop() 从按下到收尾有数秒窗口，第二次触发直接吞掉（防双份提炼/重复纪要）。
+    private func endCapture() {
+        guard capture.isCapturing, !stopInFlight else { return }
+        stopInFlight = true
+        Task {
+            let text = await capture.stop()
+            stopInFlight = false
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
+                ingestLive(transcript: text, durationSec: capture.elapsed)
             }
-        } else {
-            showRecPanel = true
-            Task { await capture.start() }
         }
     }
 
@@ -467,7 +525,7 @@ final class AppStore: ObservableObject {
         let i = selectedMeeting + delta
         guard meetings.indices.contains(i) else { return }
         selectedMeeting = i
-        dtodos = current.dtodos
+        dtodos = applyConfirmations(current.dtodos, meetingID: current.id)
     }
 
     // MARK: - 时间戳 × 日历：猜这段录音属于哪场会，给改名建议
@@ -512,10 +570,11 @@ final class AppStore: ObservableObject {
         guard let i = meetings.firstIndex(where: { $0.id == id }) else { return }
         meetings[i].title = title
         LiveStore.rename(id: id, title: title)
-        ctodos = AppStore.deriveCrossTodos(from: meetings)   // 待办里的会议标签同步
-        if i == selectedMeeting { dtodos = current.dtodos }
+        rederiveTodos()                                      // 待办里的会议标签同步
         refreshDerived()
     }
+
+    func liveDuration(id: String) -> Int? { liveDurations[id] }
 
     /// 录制条完成态被点击 → 打开刚生成的纪要
     func openFreshLive() {
@@ -607,6 +666,8 @@ final class AppStore: ObservableObject {
                     assigneeOpenID: assignee)
                 taskLinks[key] = created.guid
                 TaskLinkStore.save(taskLinks)
+                rederiveTodos()
+                refreshDerived()
                 if !quiet {
                     showToast(assignToSelf ? "已认领，飞书任务已创建"
                                            : "飞书任务已创建：\(todo.text.prefix(14))…\(note)")
@@ -622,12 +683,15 @@ final class AppStore: ObservableObject {
     // cross-meeting todos
     func toggleCtodo(_ id: Int) {
         guard let i = ctodos.firstIndex(where: { $0.id == id }) else { return }
+        let key = ctodos[i].key
         if ctodos[i].status == .done {
-            ctodos[i].status = ctodos[i].wasBeforeDone ?? .doing
+            ctodos[i].status = (Self.overdueDays(due: ctodos[i].due) ?? 0) > 0 ? .overdue : .doing
+            if !key.isEmpty { doneTodoKeys.remove(key) }
         } else {
-            ctodos[i].wasBeforeDone = ctodos[i].status
             ctodos[i].status = .done
+            if !key.isEmpty { doneTodoKeys.insert(key) }
         }
+        saveDoneKeys()
         refreshDerived()
     }
 
@@ -650,26 +714,6 @@ final class AppStore: ObservableObject {
     func obSkip() {
         showOnboarding = false
         obStep = 0
-    }
-
-    /// Flatten every meeting's refined todos into the cross-meeting list (real-data mode).
-    /// 截止日期已过、还没勾掉的 → 逾期（真实计算，不是摆设）。
-    static func deriveCrossTodos(from meetings: [MeetingVM]) -> [CrossTodo] {
-        var out: [CrossTodo] = []
-        var id = 1
-        for mv in meetings {
-            for t in mv.dtodos {
-                let label = mv.dayChip == "·" ? mv.title : "\(mv.title) · \(mv.dayChip)"
-                let done = t.status == .confirmed
-                let status: CrossStatus = done ? .done
-                    : (Self.overdueDays(due: t.due) ?? 0) > 0 ? .overdue : .doing
-                out.append(CrossTodo(id: id, text: t.text, meeting: label,
-                                     owner: t.owner ?? "待认领", initial: t.initial, color: t.color,
-                                     due: t.due, status: status))
-                id += 1
-            }
-        }
-        return out
     }
 
     /// "6/13" 距今逾期几天；解析不了（"—"、"Q3"）返回 nil。
@@ -749,7 +793,13 @@ final class AppStore: ObservableObject {
 
     /// 标题规范化：标题是模型按内容起的，同系列两场会几乎不会逐字相同 ——
     /// 去掉日期/期数/「会议纪要」类后缀后再比较，才追得上。
+    private static let normLock = NSLock()
+    nonisolated(unsafe) private static var normCache: [String: String] = [:]
+
     static func normalizedTitle(_ t: String) -> String {
+        normLock.lock()
+        if let hit = normCache[t] { normLock.unlock(); return hit }
+        normLock.unlock()
         var s = t.lowercased()
         s = s.replacingOccurrences(of: #"[（(]第?[0-9一二三四五六七八九十xX]+[周期次]?[)）]"#,
                                    with: "", options: .regularExpression)
@@ -762,7 +812,12 @@ final class AppStore: ObservableObject {
                        "复盘会", "规划会", "分享会", "周会", "例会", "会议", "纪要", "会"] {
             if s.hasSuffix(suffix) { s = String(s.dropLast(suffix.count)); break }
         }
-        return s.filter { !$0.isWhitespace && !"·-—:：()（）&/".contains($0) }
+        let out = s.filter { !$0.isWhitespace && !"·-—:：()（）&/".contains($0) }
+        normLock.lock()
+        if normCache.count > 2048 { normCache.removeAll() }   // 防无界增长
+        normCache[t] = out
+        normLock.unlock()
+        return out
     }
 
     /// 同一系列：规范化后相等 / 一方包含另一方 / 共同前缀足够长且占短标题 70% 以上。
@@ -957,20 +1012,22 @@ final class AppStore: ObservableObject {
     }
 
     /// 第一个命中词前后各 ~28 字的上下文，命中词加粗。
+    /// 索引永远只在同一个串上（caseInsensitive 搜原串）—— lowercased() 会改变某些字符的
+    /// 长度（İ/ẞ 等），拿小写串的 Range 去切原串会越界崩溃。
     static func snippet(in text: String, tokens: [String]) -> AttributedString? {
-        let lc = text.lowercased()
-        guard let token = tokens.first(where: { lc.contains($0) }),
-              let r = lc.range(of: token) else { return nil }
+        guard let token = tokens.first(where: {
+            text.range(of: $0, options: .caseInsensitive) != nil
+        }), let r = text.range(of: token, options: .caseInsensitive) else { return nil }
         let start = text.index(r.lowerBound, offsetBy: -28, limitedBy: text.startIndex) ?? text.startIndex
         let end = text.index(r.upperBound, offsetBy: 28, limitedBy: text.endIndex) ?? text.endIndex
         var window = String(text[start..<end]).replacingOccurrences(of: "\n", with: " ")
         if start > text.startIndex { window = "…" + window }
         if end < text.endIndex { window += "…" }
         var attr = AttributedString(window)
-        let lcWindow = window.lowercased()
         for t in tokens {
-            var searchFrom = lcWindow.startIndex
-            while let hit = lcWindow.range(of: t, range: searchFrom..<lcWindow.endIndex) {
+            var searchFrom = window.startIndex
+            while let hit = window.range(of: t, options: .caseInsensitive,
+                                         range: searchFrom..<window.endIndex) {
                 if let lo = AttributedString.Index(hit.lowerBound, within: attr),
                    let hi = AttributedString.Index(hit.upperBound, within: attr) {
                     attr[lo..<hi].font = .system(size: 11.5, weight: .bold)
@@ -989,9 +1046,10 @@ final class AppStore: ObservableObject {
         case .todos:
             flashTodoText = hit.title            // 落点行闪一下，2 秒后熄
             go(.todos)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.flashTodoText = nil
-            }
+            flashWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.flashTodoText = nil }
+            flashWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
         case .archive(let title):
             archiveTargetTitle = title
             libraryRawTab = true

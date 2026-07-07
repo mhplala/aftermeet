@@ -83,7 +83,7 @@ final class WhisperServer {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: exe)
         p.arguments = args
-        let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()

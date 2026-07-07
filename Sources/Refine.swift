@@ -171,9 +171,11 @@ enum Refine {
         let stdin = Pipe(), stdout = Pipe()
         proc.standardInput = stdin
         proc.standardOutput = stdout
-        proc.standardError = Pipe()
+        proc.standardError = FileHandle.nullDevice
         try proc.run()
-        stdin.fileHandleForWriting.write(body)
+        // curl 早退时管道读端关闭：write 会触发 SIGPIPE/NSFileHandle 异常直接崩 app ——
+        // 用 throwing API 接住，写失败按"无响应"走重试。
+        do { try stdin.fileHandleForWriting.write(contentsOf: body) } catch {}
         try? stdin.fileHandleForWriting.close()
         let out = stdout.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()

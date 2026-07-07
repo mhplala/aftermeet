@@ -72,8 +72,8 @@ struct TopBar: View {
 
     @ViewBuilder
     private var results: some View {
-        let hits = store.search(query)
         if searchFocused && !query.isEmpty {
+            let hits = store.search(query)
             VStack(alignment: .leading, spacing: 0) {
                 if hits.isEmpty {
                     Text("未找到与「\(query)」相关的内容")

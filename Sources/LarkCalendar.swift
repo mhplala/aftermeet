@@ -37,7 +37,7 @@ enum LarkCalendar {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: args[0])
         p.arguments = Array(args.dropFirst())
-        let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let d = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()

@@ -81,7 +81,7 @@ struct TodosScreen: View {
     private var openN: Int { store.ctodos.filter { $0.status != .done }.count }
     private var overN: Int { store.ctodos.filter { $0.status == .overdue }.count }
     private var doneN: Int { store.ctodos.filter { $0.status == .done }.count }
-    private var closeRate: Int { Int((Double(doneN) / Double(store.ctodos.count) * 100).rounded()) }
+    private var closeRate: Int { store.ctodos.isEmpty ? 0 : Int((Double(doneN) / Double(store.ctodos.count) * 100).rounded()) }
 }
 
 // MARK: - Cross-meeting todo row

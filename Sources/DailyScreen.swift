@@ -32,7 +32,9 @@ struct DailyScreen: View {
             .padding(32)
         }
         .onAppear {
-            if day.isEmpty { store.dailyDay = days.first?.day ?? "" }
+            if day.isEmpty || !days.contains(where: { $0.day == day }) {
+                store.dailyDay = days.first?.day ?? ""       // 数据变化后旧选择可能已不存在
+            }
             if !day.isEmpty { store.generateDigest(day: day) }
         }
     }

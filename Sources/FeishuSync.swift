@@ -38,7 +38,7 @@ final class FeishuSync: ObservableObject {
         }
     }
 
-    /// 扫最近 14 天里 app 还没见过的会，逐个提炼后并入 meetings.json。
+    /// 扫最近 14 天里 app 还没见过的会，逐个提炼后逐条入库（重活全在后台线程）。
     func sync() async {
         guard !syncing, Lark.available else { return }
         syncing = true
@@ -48,44 +48,39 @@ final class FeishuSync: ObservableObject {
             lastSyncLabel = "上次同步 \(f.string(from: Date()))"
         }
 
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-        let start = f.string(from: Date().addingTimeInterval(-14 * 86400))
-        let end = f.string(from: Date().addingTimeInterval(86400))
+        let fresh = await Task.detached(priority: .utility) { () -> [RealMeeting] in
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+            let start = f.string(from: Date().addingTimeInterval(-14 * 86400))
+            let end = f.string(from: Date().addingTimeInterval(86400))
 
-        guard let search = await Lark.runJSON(["vc", "+search", "--start", start, "--end", end], timeout: 60),
-              let items = (search["data"] as? [String: Any])?["items"] as? [[String: Any]] else { return }
+            guard let search = await Lark.runJSON(["vc", "+search", "--start", start, "--end", end], timeout: 60),
+                  let items = (search["data"] as? [String: Any])?["items"] as? [[String: Any]] else { return [] }
 
-        let known = Set(RealData.load().map { $0.meeting_id })
-        var fresh: [RealMeeting] = []
-
-        for it in items {
-            guard let mid = it["id"] as? String, !known.contains(mid) else { continue }
-            guard let notes = await Lark.runJSON(["vc", "+notes", "--meeting-ids", mid], timeout: 60),
-                  let list = (notes["data"] as? [String: Any])?["notes"] as? [[String: Any]],
-                  let token = list.first?["verbatim_doc_token"] as? String, !token.isEmpty else { continue }
-            guard let doc = await Lark.runJSON(["docs", "+fetch", "--api-version", "v2",
-                                                "--doc", token, "--doc-format", "markdown"], timeout: 120),
-                  let content = ((doc["data"] as? [String: Any])?["document"] as? [String: Any])?["content"] as? String,
-                  content.count >= 400 else { continue }
-
-            if let m = await refine(meetingID: mid, transcript: content) { fresh.append(m) }
-        }
+            let known = Set(RealData.load().map { $0.meeting_id })
+            var out: [RealMeeting] = []
+            for it in items {
+                guard let mid = it["id"] as? String, !known.contains(mid) else { continue }
+                guard let notes = await Lark.runJSON(["vc", "+notes", "--meeting-ids", mid], timeout: 60),
+                      let list = (notes["data"] as? [String: Any])?["notes"] as? [[String: Any]],
+                      let token = list.first?["verbatim_doc_token"] as? String, !token.isEmpty else { continue }
+                guard let doc = await Lark.runJSON(["docs", "+fetch", "--api-version", "v2",
+                                                    "--doc", token, "--doc-format", "markdown"], timeout: 120),
+                      let content = ((doc["data"] as? [String: Any])?["document"] as? [String: Any])?["content"] as? String,
+                      content.count >= 400 else { continue }
+                guard let raw = try? await Refine.rawJSON(system: FeishuSync.syncSystem,
+                                                          user: "会议逐字稿如下：\n\n" + content),
+                      let data = raw.data(using: .utf8),
+                      var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+                obj["meeting_id"] = mid
+                guard let merged = try? JSONSerialization.data(withJSONObject: obj),
+                      let m = try? JSONDecoder().decode(RealMeeting.self, from: merged) else { continue }
+                if RealData.upsert(m) { out.append(m) }        // 逐条入库；失败的不进列表
+            }
+            return out
+        }.value
 
         guard !fresh.isEmpty else { return }
-        var all = RealData.load()
-        all.insert(contentsOf: fresh, at: 0)
-        RealData.save(all)
         onNewMeetings?(fresh)
     }
 
-    /// 豆包按 sync.sh 的 schema 提炼；把 meeting_id 补进 JSON 后解码成 RealMeeting。
-    private func refine(meetingID: String, transcript: String) async -> RealMeeting? {
-        guard let raw = try? await Refine.rawJSON(system: Self.syncSystem,
-                                                  user: "会议逐字稿如下:\n\n" + transcript),
-              let data = raw.data(using: .utf8),
-              var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
-        obj["meeting_id"] = meetingID
-        guard let merged = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
-        return try? JSONDecoder().decode(RealMeeting.self, from: merged)
-    }
 }

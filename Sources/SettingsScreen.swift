@@ -86,6 +86,7 @@ struct SettingsScreen: View {
     @State private var currentModel = Whisper.model
     @State private var localModels: [(path: String, size: String)] = []
     @State private var usage: String = ""
+    @State private var usageLoading = false
 
     /// 可下载的常用模型（多语种，中文可用；q5 为量化版，体积小速度快）
     private let downloadable: [(file: String, label: String, size: String)] = [
@@ -347,6 +348,8 @@ struct SettingsScreen: View {
 
     /// GET /v1/usage —— 今日 token 用量 / 配额（走和提炼同一条 SNI 绕过链路）
     private func fetchUsage() {
+        guard !usageLoading else { return }
+        usageLoading = true
         Task.detached(priority: .utility) {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
@@ -356,7 +359,10 @@ struct SettingsScreen: View {
                            "-H", "Authorization: Bearer \(SikuCloud.deviceToken)",
                            "-H", "X-Siku-App: \(SikuCloud.appSecret)"]
             let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
-            try? p.run()
+            do { try p.run() } catch {
+                await MainActor.run { self.usage = "用量读取失败"; self.usageLoading = false }
+                return
+            }
             let data = out.fileHandleForReading.readDataToEndOfFile()
             p.waitUntilExit()
             var label = "用量读取失败"
@@ -370,7 +376,7 @@ struct SettingsScreen: View {
                 }
             }
             let final = label
-            await MainActor.run { self.usage = final }
+            await MainActor.run { self.usage = final; self.usageLoading = false }
         }
     }
 }

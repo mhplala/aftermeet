@@ -15,6 +15,20 @@ struct CalendarScreen: View {
     private var events: [Lark.CalEvent] { store.calEvents }
     private var loading: Bool { store.calLoading && store.calEvents.isEmpty }
     @State private var visibleDay: String = "today"
+    @State private var suppressTrackingUntil = Date.distantPast   // 点击刻度的动画滚动期间别回写选中
+
+    private static let timeFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+    private static let dayFmt: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 EEEE"; return f
+    }()
+    private static let dFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "d"; return f
+    }()
+    private static let wFmt: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "EEEEE"; return f
+    }()
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -38,7 +52,7 @@ struct CalendarScreen: View {
                     }
                     .padding(.top, 18)
                 } else {
-                    daysList
+                    daysList(grouped())
                 }
             }
             .frame(maxWidth: 820, alignment: .leading)
@@ -47,6 +61,7 @@ struct CalendarScreen: View {
         }
         .coordinateSpace(name: "calScroll")
         .onPreferenceChange(DayOffsetKey.self) { offsets in
+            guard Date() >= suppressTrackingUntil else { return }   // 程序化滚动中，别覆盖点击的选中
             // 顶部基准线之上、离得最近的那天 = 当前在看的天
             let top: CGFloat = 140
             if let cur = offsets.filter({ $0.value <= top }).max(by: { $0.value < $1.value })?.key
@@ -54,7 +69,7 @@ struct CalendarScreen: View {
                 if cur != visibleDay { visibleDay = cur }
             }
         }
-        dateRail(proxy)
+        dateRail(proxy, grouped())
         }
         .onAppear {
             store.loadCalendar()             // TTL 15 分钟内直接用缓存
@@ -68,15 +83,16 @@ struct CalendarScreen: View {
 
     // MARK: - 右侧日期快速跳转
 
-    private func dateRail(_ proxy: ScrollViewProxy) -> some View {
-        let df = DateFormatter(); df.dateFormat = "d"
-        let wf = DateFormatter(); wf.locale = Locale(identifier: "zh_CN"); wf.dateFormat = "EEEEE"  // 一字周几
+    private func dateRail(_ proxy: ScrollViewProxy, _ groups: [DayGroup]) -> some View {
+        let df = Self.dFmt
+        let wf = Self.wFmt  // 一字周几
         return VStack(spacing: 2) {
-            ForEach(grouped()) { day in
+            ForEach(groups) { day in
                 let date = day.events.first?.start ?? Date()
                 let selected = visibleDay == day.id
                 Button {
                     visibleDay = day.id
+                    suppressTrackingUntil = Date().addingTimeInterval(0.45)
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(day.id, anchor: .top) }
                 } label: {
                     HStack(spacing: 6) {
@@ -162,7 +178,7 @@ struct CalendarScreen: View {
     /// 严格时间升序：过去 → 今天 → 未来；今天没日程也插一行占位（滚动锚点）。
     private func grouped() -> [DayGroup] {
         let cal = Calendar.current
-        let df = DateFormatter(); df.locale = Locale(identifier: "zh_CN"); df.dateFormat = "M月d日 EEEE"
+        let df = Self.dayFmt
         var map: [Date: [Lark.CalEvent]] = [:]
         for ev in events.sorted(by: { $0.start < $1.start }) {
             map[cal.startOfDay(for: ev.start), default: []].append(ev)
@@ -179,8 +195,8 @@ struct CalendarScreen: View {
     }
 
     @ViewBuilder
-    private var daysList: some View {
-        ForEach(grouped()) { day in
+    private func daysList(_ groups: [DayGroup]) -> some View {
+        ForEach(groups) { day in
             VStack(alignment: .leading, spacing: 0) {
                 dayHeader(day)
                 if day.events.isEmpty {
@@ -246,7 +262,7 @@ struct CalendarScreen: View {
         for (idx, m) in store.meetings.enumerated() {
             if AppStore.sameSeries(evNorm, AppStore.normalizedTitle(m.title)) { return .note(idx) }
             if m.id.hasPrefix("live-"), let ts = Double(m.id.dropFirst(5)) {
-                let dur = Double(600)
+                let dur = Double(store.liveDuration(id: m.id) ?? 600)
                 let recStart = ts - dur, recEnd = ts
                 let overlap = min(ev.end.timeIntervalSince1970, recEnd)
                     - max(ev.start.timeIntervalSince1970, recStart)
@@ -257,7 +273,7 @@ struct CalendarScreen: View {
     }
 
     private func eventRow(_ ev: Lark.CalEvent, last: Bool) -> some View {
-        let tf = DateFormatter(); tf.dateFormat = "HH:mm"
+        let tf = Self.timeFmt
         let kind = link(for: ev)
         return VStack(spacing: 0) {
             Button {

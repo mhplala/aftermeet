@@ -95,15 +95,14 @@ enum RealData {
             row.payload.data(using: .utf8).flatMap { try? dec.decode(RealMeeting.self, from: $0) }
         }
     }
-    static func save(_ meetings: [RealMeeting]) {
-        let enc = JSONEncoder()
-        let rows = meetings.enumerated().compactMap { i, m -> (String, Double, String, DB.FTSDoc)? in
-            guard let d = try? enc.encode(m), let s = String(data: d, encoding: .utf8) else { return nil }
-            return (m.meeting_id, Double(1_000_000 - i), s,
-                    DB.FTSDoc(title: m.title, summary: m.summary,
-                              transcript: m.excerpts.map { $0.text }.joined(separator: "\n")))
-        }
-        DB.shared.replaceMeetings(kind: "feishu", rows: rows)
+    /// 逐条 upsert（新会 sort_ts 用当前时间，排最前）。不做全量替换 ——
+    /// 全量替换会把"某行解码失败被 compactMap 丢掉"放大成物理删除。
+    @discardableResult
+    static func upsert(_ m: RealMeeting, sortTs: Double = Date().timeIntervalSince1970) -> Bool {
+        guard let d = try? JSONEncoder().encode(m), let s = String(data: d, encoding: .utf8) else { return false }
+        return DB.shared.upsertMeeting(id: m.meeting_id, kind: "feishu", sortTs: sortTs, payload: s,
+                                       fts: DB.FTSDoc(title: m.title, summary: m.summary,
+                                                      transcript: m.excerpts.map { $0.text }.joined(separator: "\n")))
     }
 }
 
@@ -124,24 +123,34 @@ enum LiveStore {
                   summary: m.note.summary ?? m.note.blocks?.first(where: { $0.type == "summary" })?.text ?? "",
                   transcript: m.transcript)
     }
-    private static func upsert(_ m: StoredLiveMeeting) {
-        guard let d = try? JSONEncoder().encode(m), let s = String(data: d, encoding: .utf8) else { return }
-        DB.shared.upsertMeeting(id: m.id, kind: "live", sortTs: m.timestamp, payload: s, fts: ftsDoc(m))
-    }
-
     static func load() -> [StoredLiveMeeting] {
         let dec = JSONDecoder()
         return DB.shared.meetingPayloads(kind: "live").compactMap { row in
             row.payload.data(using: .utf8).flatMap { try? dec.decode(StoredLiveMeeting.self, from: $0) }
         }
     }
-    /// 追加一场会 = 插一行（不再整文件重写）。
-    static func append(_ m: StoredLiveMeeting) { upsert(m) }
+    /// 追加一场会 = 插一行（不再整文件重写）。DB 写失败时把这场会落成救援 JSON，绝不无声丢。
+    @discardableResult
+    static func append(_ m: StoredLiveMeeting) -> Bool {
+        if upsertChecked(m) { return true }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AfterMeet")
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        if let d = try? JSONEncoder().encode(m) {
+            try? d.write(to: base.appendingPathComponent("rescue-\(m.id).json"))
+        }
+        return false
+    }
+    private static func upsertChecked(_ m: StoredLiveMeeting) -> Bool {
+        guard DB.shared.healthy,
+              let d = try? JSONEncoder().encode(m), let s = String(data: d, encoding: .utf8) else { return false }
+        return DB.shared.upsertMeeting(id: m.id, kind: "live", sortTs: m.timestamp, payload: s, fts: ftsDoc(m))
+    }
 
     static func rename(id: String, title: String) {
         guard let old = load().first(where: { $0.id == id }) else { return }
-        upsert(StoredLiveMeeting(id: old.id, title: title, timestamp: old.timestamp,
-                                 durationSec: old.durationSec, transcript: old.transcript, note: old.note))
+        _ = upsertChecked(StoredLiveMeeting(id: old.id, title: title, timestamp: old.timestamp,
+                                            durationSec: old.durationSec, transcript: old.transcript, note: old.note))
     }
 }
 

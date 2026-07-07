@@ -8,9 +8,9 @@ struct RecStrip: View {
 
     private enum Phase { case idle, detected, recording, refining, done }
     private var phase: Phase {
-        if store.freshLiveID != nil { return .done }
         if store.refining { return .refining }
-        if cap.isCapturing { return .recording }
+        if cap.isCapturing { return .recording }        // 新录制进行中：完成态让位
+        if store.freshLiveID != nil { return .done }
         if store.meetingActive { return .detected }
         return .idle
     }

@@ -325,7 +325,15 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         DispatchQueue.main.async {
             self.tickTimer?.invalidate(); self.tickTimer = nil
             self.clockTimer?.invalidate(); self.clockTimer = nil
-            self.status = "采集中断：\(error.localizedDescription)"; self.isCapturing = false
+            let e = self.elapsed
+            self.status = "采集中断：\(error.localizedDescription)"
+            self.isCapturing = false
+            self.stream = nil
+            // 收口：把最后一窗音频落定，再关掉常驻 whisper-server（不然 ~1GB 常驻到下次录制）
+            self.inferQueue.async {
+                self.runInferenceSync(forceCommit: true, sessionElapsed: e)
+                self.server.stop()
+            }
         }
     }
 }
