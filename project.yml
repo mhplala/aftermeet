@@ -22,7 +22,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.siku.aftermeet
         PRODUCT_NAME: AfterMeet
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: 会后秘书
+        INFOPLIST_KEY_CFBundleDisplayName: Aftermeet
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "把会中音频本地转写成文字"
         INFOPLIST_KEY_NSHumanReadableCopyright: ""

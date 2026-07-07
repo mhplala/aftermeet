@@ -57,9 +57,9 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 0) {
             iconBadge(bg: Theme.accent, fg: .white, symbol: "checkmark", size: 52, radius: 14)
                 .padding(.bottom, 20)
-            (Text("会后").foregroundColor(Theme.inkPrimary)
-                + Text("秘书").foregroundColor(Theme.accent))
-                .font(Theme.display(28, .medium)).tracking(-0.5).padding(.bottom, 12)
+            Text("Aftermeet")
+                .font(Theme.display(28, .semibold)).tracking(-0.5)
+                .foregroundColor(Theme.inkPrimary).padding(.bottom, 12)
             Text("会议结束后自动整理逐字稿，生成决策、待办与负责人；待办可一键创建为飞书任务，并在下次会议前汇总完成进度。\n\n全程无需手动操作。")
                 .font(Theme.ui(14.5)).foregroundColor(Theme.inkSecondary).lineSpacing(6)
                 .fixedSize(horizontal: false, vertical: true)

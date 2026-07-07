@@ -27,7 +27,7 @@ struct MenuBarPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "waveform").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.accent)
-                Text("会后秘书").font(.system(size: 13, weight: .semibold))
+                Text("Aftermeet").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 HStack(spacing: 5) {
                     Circle().fill(capture.isCapturing ? Color.red : Color.secondary.opacity(0.5)).frame(width: 6, height: 6)
@@ -71,7 +71,7 @@ struct MenuBarPanel: View {
 
             row("同步飞书会议", "arrow.triangle.2.circlepath") { store.syncNow() }
             row("打开主窗口", "macwindow") { activateMainWindow() }
-            row("退出 AfterMeet", "power") { NSApplication.shared.terminate(nil) }
+            row("退出 Aftermeet", "power") { NSApplication.shared.terminate(nil) }
                 .padding(.bottom, 6)
         }
         .frame(width: 264)

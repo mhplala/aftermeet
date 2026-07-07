@@ -6,11 +6,11 @@ struct Sidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             // clear the traffic-light region (hidden title bar)
-            Spacer().frame(height: 26)
+            Spacer().frame(height: 44)
 
             logo
                 .padding(.horizontal, 8)
-                .padding(.bottom, 14)
+                .padding(.bottom, 18)
 
             NavItem(icon: "house", label: "概览",
                     active: store.screen == .home) { store.go(.home) }
@@ -73,16 +73,10 @@ struct Sidebar: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                (Text("会后").foregroundColor(Theme.inkPrimary)
-                    + Text("秘书").foregroundColor(Theme.accent))
-                    .font(Theme.display(18, .semibold))
-                    .tracking(-0.3)
-                Text("AFTERMEET")
-                    .font(Theme.mono(9, .regular))
-                    .tracking(1.6)
-                    .foregroundColor(Theme.inkMuted)
-            }
+            Text("Aftermeet")
+                .font(Theme.display(18, .semibold))
+                .tracking(-0.3)
+                .foregroundColor(Theme.inkPrimary)
         }
     }
 

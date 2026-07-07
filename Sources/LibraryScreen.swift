@@ -184,6 +184,7 @@ struct LibraryScreen: View {
 // MARK: - 原始转写 tab（原「转写历史」整体併入，含合并逻辑 + 全文查看）
 
 struct TranscriptArchiveView: View {
+    @EnvironmentObject var store: AppStore
     @State private var files: [TranscriptFile] = []
     @State private var selected: TranscriptFile?
     @State private var loading = true
@@ -203,6 +204,11 @@ struct TranscriptArchiveView: View {
             let loaded = await Task.detached(priority: .userInitiated) { Self.loadFiles() }.value
             files = loaded
             loading = false
+            // 搜索命中的档案 → 直接打开那条
+            if let target = store.archiveTargetTitle {
+                selected = loaded.first { $0.title == target }
+                store.archiveTargetTitle = nil
+            }
         }
     }
 
@@ -312,7 +318,7 @@ struct TranscriptArchiveView: View {
 
     private struct Frag { let url: URL; let start: Date; let end: Date; let name: String; let dateStr: String; let body: String }
 
-    private static func loadFiles() -> [TranscriptFile] {
+    static func loadFiles() -> [TranscriptFile] {
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: Self.dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         let dd = DateFormatter(); dd.locale = Locale(identifier: "zh_CN"); dd.dateFormat = "M月d日 HH:mm"

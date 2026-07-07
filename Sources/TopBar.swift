@@ -82,26 +82,21 @@ struct TopBar: View {
                         .font(Theme.ui(12.5)).foregroundColor(Theme.inkTertiary)
                         .padding(.horizontal, 14).padding(.vertical, 12)
                 } else {
-                    ForEach(hits) { h in
-                        Button { open(h) } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: h.icon)
-                                    .font(.system(size: 12)).foregroundColor(Theme.inkTertiary)
-                                    .frame(width: 16)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(h.title).font(Theme.ui(13)).foregroundColor(Theme.inkPrimary).lineLimit(1)
-                                    Text(h.meta).font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary).lineLimit(1)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .contentShape(Rectangle())
+                    let groups: [AppStore.SearchKind] = [.meeting, .todo, .archive]
+                    ForEach(groups, id: \.rawValue) { kind in
+                        let inGroup = hits.filter { $0.kind == kind }
+                        if !inGroup.isEmpty {
+                            Text(kind.rawValue)
+                                .font(Theme.mono(9.5, .semibold)).tracking(1.0)
+                                .foregroundColor(Theme.inkMuted)
+                                .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 3)
+                            ForEach(inGroup) { h in resultRow(h) }
                         }
-                        .buttonStyle(.plain)
                     }
+                    Color.clear.frame(height: 8)
                 }
             }
-            .frame(width: 330, alignment: .leading)
+            .frame(width: 380, alignment: .leading)
             .background(.ultraThinMaterial)
             .background(Color.white.opacity(0.75))
             .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
@@ -109,6 +104,29 @@ struct TopBar: View {
                 .strokeBorder(Color.white.opacity(0.9), lineWidth: 1))
             .popShadow()
         }
+    }
+
+    private func resultRow(_ h: AppStore.SearchHit) -> some View {
+        Button { open(h) } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: h.icon)
+                    .font(.system(size: 12)).foregroundColor(Theme.inkTertiary)
+                    .frame(width: 16).padding(.top, 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(h.title).font(Theme.ui(13, .medium)).foregroundColor(Theme.inkPrimary).lineLimit(1)
+                    Text(h.meta).font(Theme.mono(10)).foregroundColor(Theme.inkTertiary).lineLimit(1)
+                    if let sn = h.snippet {
+                        Text(sn)
+                            .font(Theme.ui(11.5)).foregroundColor(Theme.inkSecondary)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func open(_ h: AppStore.SearchHit) {

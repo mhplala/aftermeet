@@ -230,6 +230,7 @@ final class AppStore: ObservableObject {
         // FeishuSync 是嵌套 ObservableObject，把它的变化转发出去，侧栏状态卡才会刷新
         syncForward = sync.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         sync.start()
+        buildArchiveIndex()      // 转写档案全文进搜索
     }
 
     /// 自动同步拉到新会 → 并进列表并提示（本地捕获的仍排最上面）。
@@ -520,7 +521,7 @@ final class AppStore: ObservableObject {
             do {
                 let created = try await Lark.createTask(
                     summary: todo.text,
-                    description: "来自会议「\(meetingTitle)」 · AfterMeet 会后秘书"
+                    description: "来自会议「\(meetingTitle)」 · Aftermeet"
                         + (owner.map { " · 负责人：\($0)" } ?? ""),
                     due: todo.due == "—" ? nil : todo.due,
                     assigneeOpenID: assignee)
@@ -628,7 +629,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    // MARK: - 会前追问（真实模式）：同名会议开过 ≥2 次 → 用上一场的待办生成对比卡
+    // MARK: - 会前追问（真实模式）：同系列会议再次出现 → 用上一场的待办生成对比卡
 
     struct RecurringCard {
         let title: String
@@ -636,20 +637,47 @@ final class AppStore: ObservableObject {
         let items: [FollowItem]
     }
 
+    /// 标题规范化：标题是模型按内容起的，同系列两场会几乎不会逐字相同 ——
+    /// 去掉日期/期数/「会议纪要」类后缀后再比较，才追得上。
+    static func normalizedTitle(_ t: String) -> String {
+        var s = t.lowercased()
+        s = s.replacingOccurrences(of: #"[（(]第?[0-9一二三四五六七八九十xX]+[周期次]?[)）]"#,
+                                   with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"\d{1,2}[月/]\d{1,2}日?"#, with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"[qQ][1-4]"#, with: "", options: .regularExpression)
+        for suffix in ["会议纪要", "研讨会议", "沟通会议", "对齐会议", "同步会议", "评审会议",
+                       "复盘会议", "规划会议", "讨论会", "研讨会", "同步会", "评审会",
+                       "复盘会", "规划会", "分享会", "周会", "例会", "会议", "纪要", "会"] {
+            if s.hasSuffix(suffix) { s = String(s.dropLast(suffix.count)); break }
+        }
+        return s.filter { !$0.isWhitespace && !"·-—:：()（）&/".contains($0) }
+    }
+
+    /// 同一系列：规范化后相等，或共同前缀 ≥ 8 字符（自动命名下的宽容匹配）。
+    static func sameSeries(_ a: String, _ b: String) -> Bool {
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if a == b { return true }
+        let common = zip(a, b).prefix { $0 == $1 }.count
+        return common >= 8
+    }
+
     var recurringCard: RecurringCard? {
         guard usingRealData else { return nil }
-        var byTitle: [String: [MeetingVM]] = [:]
-        for m in meetings { byTitle[m.title, default: []].append(m) }   // meetings 已按新→旧
-        guard let (title, group) = byTitle.first(where: { $0.value.count >= 2 }) else { return nil }
-        let prev = group[1]                                             // 上一场
-        let items = prev.dtodos.enumerated().map { idx, t in
-            let done = ctodos.contains {
-                $0.text == t.text && $0.meeting.hasPrefix(prev.title) && $0.status == .done
+        let normed = meetings.map { AppStore.normalizedTitle($0.title) }   // meetings 已按新→旧
+        for i in meetings.indices {
+            guard let j = meetings.indices.first(where: { $0 > i && AppStore.sameSeries(normed[i], normed[$0]) })
+            else { continue }
+            let prev = meetings[j]                                          // 同系列的上一场
+            let items = prev.dtodos.enumerated().map { idx, t in
+                let done = ctodos.contains {
+                    $0.text == t.text && $0.meeting.hasPrefix(prev.title) && $0.status == .done
+                }
+                return FollowItem(id: idx + 1, text: t.text, owner: t.owner ?? "待认领", done: done)
             }
-            return FollowItem(id: idx + 1, text: t.text, owner: t.owner ?? "待认领", done: done)
+            guard !items.isEmpty else { continue }
+            return RecurringCard(title: meetings[i].title, prevMeta: prev.recentMeta, items: items)
         }
-        guard !items.isEmpty else { return nil }
-        return RecurringCard(title: title, prevMeta: "\(prev.recentMeta)", items: items)
+        return nil
     }
 
     // MARK: - 铃铛：需要你处理的事
@@ -687,38 +715,125 @@ final class AppStore: ObservableObject {
         return out
     }
 
-    // MARK: - 搜索（⌘K）
+    // MARK: - 搜索（⌘K）—— 多关键词 AND、字段加权排序、命中摘录，覆盖会议/待办/转写档案
+
+    enum SearchKind: String { case meeting = "会议", todo = "待办", archive = "转写档案" }
 
     struct SearchHit: Identifiable {
         let id = UUID()
+        let kind: SearchKind
         let icon: String
         let title: String
         let meta: String
+        let snippet: AttributedString?
         let action: SearchAction
+        let score: Int
     }
-    enum SearchAction { case meeting(Int); case todos }
+    enum SearchAction { case meeting(Int); case todos; case archive(String) }
+
+    /// 转写档案索引（标题 + 全文小写），启动后台建好；搜索时只做 contains
+    struct ArchiveEntry { let title: String; let body: String; let lcBody: String }
+    private(set) var archiveIndex: [ArchiveEntry] = []
+    @Published var archiveTargetTitle: String? = nil   // 搜索命中档案 → 会议库原始转写 tab 直接打开这条
+
+    func buildArchiveIndex() {
+        Task.detached(priority: .utility) {
+            let files = TranscriptArchiveView.loadFiles()
+            let entries = files.map { ArchiveEntry(title: $0.title, body: $0.body, lcBody: $0.body.lowercased()) }
+            await MainActor.run { self.archiveIndex = entries }
+        }
+    }
 
     func search(_ raw: String) -> [SearchHit] {
-        let q = raw.trimmingCharacters(in: .whitespaces).lowercased()
-        guard q.count >= 1 else { return [] }
+        let tokens = raw.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return [] }
         var out: [SearchHit] = []
+
+        // —— 会议：标题 100 / 摘要 40 / 逐字稿 12，全部关键词都命中才算；新会加一点权重
         for (idx, m) in meetings.enumerated() {
-            let hay = m.searchBlob.isEmpty
-                ? "\(m.title) \(m.summary)".lowercased()   // 样例数据没建索引，只搜标题摘要
-                : m.searchBlob
-            if hay.contains(q) {
-                out.append(SearchHit(icon: "doc.text", title: m.title,
-                                     meta: m.recentMeta, action: .meeting(idx)))
+            let lcTitle = m.title.lowercased()
+            let lcSummary = m.summary.lowercased()
+            let lcBody = m.searchBlob.isEmpty ? "" : m.searchBlob
+            var score = 0
+            var ok = true
+            for t in tokens {
+                if lcTitle.contains(t) { score += 100 }
+                else if lcSummary.contains(t) { score += 40 }
+                else if lcBody.contains(t) { score += 12 }
+                else { ok = false; break }
+            }
+            guard ok else { continue }
+            score += max(0, 20 - idx)                                 // 越新越靠前
+            let snippet: AttributedString? = {
+                if tokens.contains(where: { m.summary.lowercased().contains($0) }) {
+                    return AppStore.snippet(in: m.summary, tokens: tokens)
+                }
+                if !m.rawTranscript.isEmpty,
+                   tokens.contains(where: { !$0.isEmpty && m.searchBlob.contains($0) }) {
+                    return AppStore.snippet(in: m.rawTranscript, tokens: tokens)
+                }
+                return nil
+            }()
+            out.append(SearchHit(kind: .meeting, icon: "doc.text", title: m.title,
+                                 meta: m.recentMeta, snippet: snippet,
+                                 action: .meeting(idx), score: score))
+        }
+
+        // —— 待办：内容 / 负责人 / 所属会议
+        for t in ctodos {
+            let hay = "\(t.text) \(t.owner) \(t.meeting)".lowercased()
+            guard tokens.allSatisfy({ hay.contains($0) }) else { continue }
+            let overdue = t.status == .overdue ? " · 已逾期" : ""
+            out.append(SearchHit(kind: .todo, icon: "checklist", title: t.text,
+                                 meta: "\(t.owner) · \(t.meeting)\(overdue)", snippet: nil,
+                                 action: .todos, score: 60))
+        }
+
+        // —— 转写档案：全文命中（会议纪要之外的原始记录也能搜到）
+        for e in archiveIndex {
+            let lcTitle = e.title.lowercased()
+            guard tokens.allSatisfy({ lcTitle.contains($0) || e.lcBody.contains($0) }) else { continue }
+            out.append(SearchHit(kind: .archive, icon: "waveform", title: e.title,
+                                 meta: "\(e.body.count) 字 · 本地存档",
+                                 snippet: AppStore.snippet(in: e.body, tokens: tokens),
+                                 action: .archive(e.title), score: 30))
+        }
+
+        // 排序 + 每组限量（会议 6 / 待办 4 / 档案 3）
+        var counts: [SearchKind: Int] = [:]
+        let caps: [SearchKind: Int] = [.meeting: 6, .todo: 4, .archive: 3]
+        return out.sorted { $0.score > $1.score }.filter { h in
+            counts[h.kind, default: 0] += 1
+            return counts[h.kind]! <= caps[h.kind]!
+        }
+    }
+
+    /// 第一个命中词前后各 ~28 字的上下文，命中词加粗。
+    static func snippet(in text: String, tokens: [String]) -> AttributedString? {
+        let lc = text.lowercased()
+        guard let token = tokens.first(where: { lc.contains($0) }),
+              let r = lc.range(of: token) else { return nil }
+        let start = text.index(r.lowerBound, offsetBy: -28, limitedBy: text.startIndex) ?? text.startIndex
+        let end = text.index(r.upperBound, offsetBy: 28, limitedBy: text.endIndex) ?? text.endIndex
+        var window = String(text[start..<end]).replacingOccurrences(of: "\n", with: " ")
+        if start > text.startIndex { window = "…" + window }
+        if end < text.endIndex { window += "…" }
+        var attr = AttributedString(window)
+        let lcWindow = window.lowercased()
+        for t in tokens {
+            var searchFrom = lcWindow.startIndex
+            while let hit = lcWindow.range(of: t, range: searchFrom..<lcWindow.endIndex) {
+                if let lo = AttributedString.Index(hit.lowerBound, within: attr),
+                   let hi = AttributedString.Index(hit.upperBound, within: attr) {
+                    attr[lo..<hi].font = .system(size: 11.5, weight: .bold)
+                    attr[lo..<hi].foregroundColor = Theme.inkPrimary
+                }
+                searchFrom = hit.upperBound
             }
         }
-        let todoHits = ctodos.filter {
-            $0.text.lowercased().contains(q) || $0.owner.lowercased().contains(q)
-        }
-        for t in todoHits.prefix(5) {
-            out.append(SearchHit(icon: "checklist", title: t.text,
-                                 meta: "\(t.owner) · \(t.meeting)", action: .todos))
-        }
-        return Array(out.prefix(8))
+        return attr
     }
 
     func open(_ hit: SearchHit) {
@@ -731,6 +846,10 @@ final class AppStore: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 self?.flashTodoText = nil
             }
+        case .archive(let title):
+            archiveTargetTitle = title
+            libraryRawTab = true
+            go(.library)
         }
     }
 
@@ -767,7 +886,7 @@ final class AppStore: ObservableObject {
             lines.append("- \(i.done ? "✅" : "⏳") \(i.text)（\(i.owner)）")
         }
         lines.append("")
-        lines.append("—— AfterMeet 会后秘书 · 会前盘点")
+        lines.append("—— Aftermeet · 会前盘点")
         return lines.joined(separator: "\n")
     }
 
@@ -812,7 +931,7 @@ final class AppStore: ObservableObject {
             lines += todos.map { "- \($0.text)（\($0.owner ?? "待认领")\($0.due == "—" ? "" : " · \($0.due)")）" }
         }
         lines.append("")
-        lines.append("—— AfterMeet 会后秘书")
+        lines.append("—— Aftermeet")
         return lines.joined(separator: "\n")
     }
 
