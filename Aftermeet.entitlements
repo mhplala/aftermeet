@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 硬化运行时下访问麦克风必须显式声明（会中转写录自己的发言） -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- 屏幕采集(系统音频)走 TCC，无需 entitlement；非沙盒，网络/子进程默认可用 -->
+</dict>
+</plist>

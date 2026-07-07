@@ -138,8 +138,8 @@ struct HomeScreen: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("近期会议纪要").font(Theme.display(19, .medium)).foregroundColor(Theme.inkPrimary)
-                    if store.usingRealData {
-                        Pill(text: "真实数据", bg: Theme.green50, fg: Theme.green700, size: 10.5)
+                    if !store.usingRealData {
+                        Pill(text: "示例数据", bg: Theme.warmWhite2, fg: Theme.inkTertiary, size: 10.5)
                     }
                     Spacer()
                     Button { store.go(.library) } label: {
