@@ -19,6 +19,30 @@ struct RealMeeting: Codable {
     let nextAgenda: [String]
     let excerpts: [RExcerpt]
     let blocks: [NoteBlock]?
+
+    enum CodingKeys: String, CodingKey {
+        case meeting_id, title, dateLabel, durationLabel, participants, organizer,
+             summary, keyPoints, decisions, todos, disputes, nextAgenda, excerpts, blocks
+    }
+
+    // 容错解码：mini 模型偶尔漏掉某个空数组字段，别让一个字段废掉整场会。
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        meeting_id    = try c.decode(String.self, forKey: .meeting_id)
+        title         = (try? c.decode(String.self, forKey: .title)) ?? "未命名会议"
+        dateLabel     = try? c.decodeIfPresent(String.self, forKey: .dateLabel)
+        durationLabel = try? c.decodeIfPresent(String.self, forKey: .durationLabel)
+        participants  = try? c.decodeIfPresent(Int.self, forKey: .participants)
+        organizer     = try? c.decodeIfPresent(String.self, forKey: .organizer)
+        summary       = (try? c.decode(String.self, forKey: .summary)) ?? ""
+        keyPoints     = try? c.decodeIfPresent([String].self, forKey: .keyPoints)
+        decisions     = (try? c.decode([RDecision].self, forKey: .decisions)) ?? []
+        todos         = (try? c.decode([RTodo].self, forKey: .todos)) ?? []
+        disputes      = (try? c.decode([RDispute].self, forKey: .disputes)) ?? []
+        nextAgenda    = (try? c.decode([String].self, forKey: .nextAgenda)) ?? []
+        excerpts      = (try? c.decode([RExcerpt].self, forKey: .excerpts)) ?? []
+        blocks        = try? c.decodeIfPresent([NoteBlock].self, forKey: .blocks)
+    }
 }
 struct RDecision: Codable { let no: String?; let text: String }
 struct RTodo: Codable { let text: String; let owner: String?; let due: String?; let confidence: String? }
@@ -75,6 +99,13 @@ enum RealData {
               let store = try? JSONDecoder().decode(RealStore.self, from: data)
         else { return [] }
         return store.meetings
+    }
+    static func save(_ meetings: [RealMeeting]) {
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(RealStore(meetings: meetings)) {
+            try? data.write(to: fileURL)
+        }
     }
 }
 

@@ -190,9 +190,16 @@ struct DetailScreen: View {
                     .padding(.vertical, 9)
                     .overlay(alignment: .top) { Hairline() }
                 }
-                Text("在妙记中打开完整逐字稿 →")
-                    .font(Theme.mono(11.5)).foregroundColor(Theme.blue500)
-                    .padding(.top, 12)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(m.rawTranscript, forType: .string)
+                    store.showToast("完整逐字稿已复制（\(m.rawTranscript.count) 字）")
+                } label: {
+                    Text("复制完整逐字稿 →")
+                        .font(Theme.mono(11.5)).foregroundColor(Theme.blue500)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 12)
             }
             .padding(.horizontal, 20).padding(.bottom, 18).padding(.top, 4)
         })
@@ -295,21 +302,31 @@ struct DetailScreen: View {
 
     // MARK: pinned action bar
 
+    @State private var showForward = false
+
     private var actionBar: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(store.confirmHint).font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary)
-                Text("确认后即在飞书任务中建卡，负责人会收到提醒")
+                Text(store.usingRealData ? "确认后即在飞书任务中建卡，负责人会收到提醒"
+                                         : "演示数据 · 确认只改本地状态，不建真实任务")
                     .font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()
-            Button { store.showToast("纪要已转发到「\(m.title)」群") } label: {
+            Button { showForward = true } label: {
                 Text("转发到群").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
                     .padding(.horizontal, 16).padding(.vertical, 9)
                     .background(Theme.white)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
                     .hairline(Theme.borderDefault, radius: Theme.rMD)
-            }.buttonStyle(.plain)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showForward, arrowEdge: .top) {
+                ForwardPicker(meetingTitle: m.title) { chat in
+                    showForward = false
+                    store.forward(to: chat)
+                }
+            }
             Button { store.confirmAll() } label: {
                 Text("全部确认并建任务").font(Theme.ui(13, .semibold)).foregroundColor(.white)
                     .padding(.horizontal, 18).padding(.vertical, 9)
@@ -328,6 +345,97 @@ struct DetailScreen: View {
         .padding(.bottom, 20)
         .padding(.top, 6)
         .background(Theme.canvas)
+    }
+}
+
+// MARK: - 转发到群：搜群 → 选一个 → 真发（markdown 纪要）
+
+struct ForwardPicker: View {
+    @EnvironmentObject var store: AppStore
+    let meetingTitle: String
+    var copyMarkdown: String? = nil       // 「复制」按钮的内容；nil = 当前会议纪要
+    let onPick: (Lark.Chat) -> Void
+
+    @State private var query = ""
+    @State private var chats: [Lark.Chat] = []
+    @State private var searching = false
+    @State private var searched = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("发到哪个群")
+                .font(Theme.mono(10, .semibold)).tracking(1.0).textCase(.uppercase)
+                .foregroundColor(Theme.inkTertiary)
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
+
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(Theme.inkTertiary)
+                TextField("搜群名…", text: $query)
+                    .textFieldStyle(.plain).font(Theme.ui(12.5))
+                    .onSubmit { search() }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(Theme.searchBg)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
+            .padding(.horizontal, 12).padding(.bottom, 8)
+
+            if searching {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("搜索中…").font(Theme.ui(12)).foregroundColor(Theme.inkTertiary)
+                }.padding(.horizontal, 14).padding(.vertical, 10)
+            } else if chats.isEmpty && searched {
+                Text("没搜到相关的群，换个词试试")
+                    .font(Theme.ui(12)).foregroundColor(Theme.inkTertiary)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+            } else {
+                ForEach(chats) { c in
+                    Button { onPick(c) } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: "person.2").font(.system(size: 11)).foregroundColor(Theme.inkTertiary)
+                            Text(c.name).font(Theme.ui(12.5)).foregroundColor(Theme.inkPrimary).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                }
+            }
+
+            Divider().padding(.vertical, 4)
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(copyMarkdown ?? AppStore.noteMarkdown(store.current),
+                                               forType: .string)
+                store.showToast("已复制，可手动粘贴到任何群")
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "doc.on.doc").font(.system(size: 11))
+                    Text("复制纪要（手动转发）").font(Theme.ui(12.5))
+                    Spacer(minLength: 0)
+                }
+                .foregroundColor(Theme.inkSecondary)
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Color.clear.frame(height: 8)
+        }
+        .frame(width: 280, alignment: .leading)
+        .onAppear {
+            query = meetingTitle
+            search()
+        }
+    }
+
+    private func search() {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        searching = true
+        Task {
+            chats = await Lark.searchChats(query: q)
+            searching = false
+            searched = true
+        }
     }
 }
 

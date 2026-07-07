@@ -34,23 +34,50 @@ struct WeeklyScreen: View {
         }
     }
 
+    private var weekOverline: String {
+        let cal = Calendar.current
+        let now = Date()
+        let weekday = cal.component(.weekday, from: now)               // 1=Sun
+        let daysFromMonday = (weekday + 5) % 7
+        let monday = cal.date(byAdding: .day, value: -daysFromMonday, to: cal.startOfDay(for: now))!
+        let friday = cal.date(byAdding: .day, value: 4, to: monday)!
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日"
+        let wd = DateFormatter(); wd.locale = Locale(identifier: "zh_CN"); wd.dateFormat = "EEEE"
+        return "\(f.string(from: monday)) – \(f.string(from: friday)) · \(wd.string(from: now))"
+    }
+
     private var header: some View {
         HStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
-                Overline("6月9日 – 6月13日 · 周五傍晚", tracking: 1.2).padding(.bottom, 8)
+                Overline(weekOverline, tracking: 1.2).padding(.bottom, 8)
                 (Text("本周").foregroundColor(Theme.inkPrimary)
                     + Text("会议回顾").foregroundColor(Theme.accent).italic())
                     .font(Theme.display(38, .medium)).tracking(-0.9)
             }
             Spacer()
-            Button { store.showToast("会议台账已生成，多维表格链接已复制") } label: {
-                Text("生成会议台账 →").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
+            Button { copyLedger() } label: {
+                Text("复制会议台账 →").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
                     .padding(.horizontal, 16).padding(.vertical, 9)
                     .background(Theme.white)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
                     .hairline(Theme.borderDefault, radius: Theme.rMD)
             }.buttonStyle(.plain)
         }
+    }
+
+    /// 真·台账：本期会议 + 待办的 Markdown 表格，直接进剪贴板（贴进文档/多维表格都行）。
+    private func copyLedger() {
+        var md = ["| 会议 | 日期 | 待办 | 负责人 | 截止 | 状态 |", "|---|---|---|---|---|---|"]
+        for t in store.ctodos {
+            let parts = t.meeting.components(separatedBy: " · ")
+            let title = parts.first ?? t.meeting
+            let day = parts.count > 1 ? parts[1] : ""
+            let status = t.status == .done ? "已完成" : (t.status == .overdue ? "逾期" : "进行中")
+            md.append("| \(title) | \(day) | \(t.text) | \(t.owner) | \(t.due) | \(status) |")
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(md.joined(separator: "\n"), forType: .string)
+        store.showToast("台账已复制（Markdown 表格，\(store.ctodos.count) 行）")
     }
 
     @ViewBuilder
@@ -61,7 +88,10 @@ struct WeeklyScreen: View {
                 StatCard(label: "产生待办", value: "\(store.ctodos.count)", sub: "\(store.crossDone) 已完成", valueSize: 34)
                 StatCard(label: "闭环率", value: "\(store.closeRatePct)", unit: "%", sub: "实时",
                          subColor: Theme.green500, valueColor: Theme.accent, valueSize: 34)
-                StatCard(label: "长期未完成", value: "0", sub: "攒数据中", valueSize: 34)
+                StatCard(label: "长期未完成", value: "\(store.staleTodos.count)",
+                         sub: store.maxOverdueDays > 0 ? "最久逾期 \(store.maxOverdueDays) 天" : "暂无逾期",
+                         valueColor: store.staleTodos.isEmpty ? Theme.inkPrimary : Theme.danger500,
+                         valueSize: 34)
             }
         } else {
             HStack(spacing: 14) {

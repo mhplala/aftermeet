@@ -31,12 +31,23 @@ struct RefinedNote: Codable {
     }
 }
 
+/// Siku 云的设备额度流：首启生成 siku-dev-<uuid>，带 X-Siku-App 头由 proxy 自动登记，
+/// 默认每天 500 万 token 免费额度 —— 用户零配置，也不再内置 owner token。
+enum SikuCloud {
+    static let appSecret = "siku-app-ea047a048adabb1108df95b63757370a"
+    static var deviceToken: String {
+        let key = "sikuDeviceToken"
+        if let t = UserDefaults.standard.string(forKey: key) { return t }
+        let t = "siku-dev-\(UUID().uuidString.lowercased())"
+        UserDefaults.standard.set(t, forKey: key)
+        return t
+    }
+}
+
 /// Calls siku-proxy (doubao) to refine a raw transcript into structured notes.
 /// Goes through /usr/bin/curl with the IP+Host SNI workaround (zhiwenai.cc's TLS
 /// gets reset domestically); curl is on the GUI app's default PATH, lark-cli is not.
 enum Refine {
-    // TODO: move off the owner token to the device-token flow (SikuCloud.appSecret).
-    static let token = "REDACTED-ROTATED-TOKEN"
     static let ip = "14.103.38.223"
     static let host = "zhiwenai.cc"
     static let model = "doubao-seed-2-0-mini-260428"
@@ -102,6 +113,25 @@ enum Refine {
         }.value
     }
 
+    /// 原始 JSON 文本出口（FeishuSync 用它按自己的 schema 解码），带解析重试。
+    static func rawJSON(system: String, user: String) async throws -> String {
+        try await Task.detached(priority: .utility) {
+            var lastError = "提炼服务无响应"
+            for _ in 1...3 {
+                do {
+                    let content = try callDoubao(system: system, user: user)
+                    if let d = content.data(using: .utf8),
+                       (try? JSONSerialization.jsonObject(with: d)) != nil { return content }
+                    let repaired = repairJSON(content)
+                    if let d = repaired.data(using: .utf8),
+                       (try? JSONSerialization.jsonObject(with: d)) != nil { return repaired }
+                    lastError = "提炼结果不是合法 JSON"
+                } catch { lastError = (error as NSError).localizedDescription }
+            }
+            throw err(lastError)
+        }.value
+    }
+
     private static func runSync(system: String, user: String) throws -> RefinedNote {
         var lastError = "提炼结果解析失败"
         for attempt in 1...3 {
@@ -133,7 +163,8 @@ enum Refine {
             "-sk", "--max-time", "180",
             "https://\(ip)/v1/chat/completions",
             "-H", "Host: \(host)",
-            "-H", "Authorization: Bearer \(token)",
+            "-H", "Authorization: Bearer \(SikuCloud.deviceToken)",
+            "-H", "X-Siku-App: \(SikuCloud.appSecret)",
             "-H", "Content-Type: application/json",
             "--data-binary", "@-",
         ]

@@ -1,15 +1,23 @@
 import SwiftUI
 
 struct TopBar: View {
+    @EnvironmentObject var store: AppStore
     @State private var query = ""
     @State private var bellHover = false
+    @State private var showBell = false
+    @FocusState private var searchFocused: Bool
+
+    private var todayLabel: String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 EEE"
+        return f.string(from: Date())
+    }
 
     var body: some View {
         HStack(spacing: 14) {
             search
                 .frame(maxWidth: 380)
             Spacer()
-            Text("6月14日 周六")
+            Text(todayLabel)
                 .font(Theme.mono(11.5))
                 .foregroundColor(Theme.inkTertiary)
             bell
@@ -19,7 +27,15 @@ struct TopBar: View {
         .frame(height: 60)
         .background(Theme.white)
         .overlay(alignment: .bottom) { Hairline() }
+        .overlay(alignment: .topLeading) { results }
+        .background {   // ⌘K 聚焦搜索
+            Button("") { searchFocused = true }
+                .keyboardShortcut("k", modifiers: .command)
+                .opacity(0)
+        }
     }
+
+    // MARK: search — 会议标题/摘要/逐字稿 + 待办/负责人 全文匹配
 
     private var search: some View {
         HStack(spacing: 8) {
@@ -29,13 +45,24 @@ struct TopBar: View {
             TextField("搜索会议、待办、负责人…", text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.ui(13))
-            Text("⌘K")
-                .font(Theme.mono(10))
-                .foregroundColor(Theme.inkTertiary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Theme.white)
-                .hairline(Theme.borderDefault, radius: 3)
+                .focused($searchFocused)
+                .onSubmit {
+                    if let first = store.search(query).first { open(first) }
+                }
+            if query.isEmpty {
+                Text("⌘K")
+                    .font(Theme.mono(10))
+                    .foregroundColor(Theme.inkTertiary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Theme.white)
+                    .hairline(Theme.borderDefault, radius: 3)
+            } else {
+                Button { query = ""; searchFocused = false } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12)).foregroundColor(Theme.inkMuted)
+                }.buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -44,22 +71,114 @@ struct TopBar: View {
         .hairline(Theme.borderDefault, radius: Theme.rMD)
     }
 
+    @ViewBuilder
+    private var results: some View {
+        let hits = store.search(query)
+        if searchFocused && !query.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                if hits.isEmpty {
+                    Text("没搜到「\(query)」")
+                        .font(Theme.ui(12.5)).foregroundColor(Theme.inkTertiary)
+                        .padding(.horizontal, 14).padding(.vertical, 12)
+                } else {
+                    ForEach(hits) { h in
+                        Button { open(h) } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: h.icon)
+                                    .font(.system(size: 12)).foregroundColor(Theme.inkTertiary)
+                                    .frame(width: 16)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(h.title).font(Theme.ui(13)).foregroundColor(Theme.inkPrimary).lineLimit(1)
+                                    Text(h.meta).font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(width: 380, alignment: .leading)
+            .background(Theme.white)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+            .hairline(Theme.borderDefault, radius: Theme.rMD)
+            .popShadow()
+            .padding(.leading, 28)
+            .padding(.top, 52)
+        }
+    }
+
+    private func open(_ h: AppStore.SearchHit) {
+        store.open(h)
+        query = ""
+        searchFocused = false
+    }
+
+    // MARK: bell — 需要处理的事，不再是摆设
+
     private var bell: some View {
-        Button {} label: {
-            Image(systemName: "bell")
-                .font(.system(size: 15, weight: .regular))
-                .foregroundColor(Theme.inkPrimary.opacity(0.8))
-                .frame(width: 34, height: 34)
-                .background(bellHover ? Theme.warmWhite : Theme.white)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-                .hairline(Theme.borderDefault, radius: Theme.rMD)
+        Button { showBell.toggle() } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "bell")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundColor(Theme.inkPrimary.opacity(0.8))
+                    .frame(width: 34, height: 34)
+                    .background(bellHover ? Theme.warmWhite : Theme.white)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+                    .hairline(Theme.borderDefault, radius: Theme.rMD)
+                if !store.notifications.isEmpty {
+                    Circle().fill(Theme.danger500).frame(width: 7, height: 7)
+                        .offset(x: -6, y: 7)
+                }
+            }
         }
         .buttonStyle(.plain)
         .onHover { bellHover = $0 }
+        .popover(isPresented: $showBell, arrowEdge: .bottom) { bellPanel }
+    }
+
+    private var bellPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("需要你处理")
+                .font(Theme.mono(10, .semibold)).tracking(1.0).textCase(.uppercase)
+                .foregroundColor(Theme.inkTertiary)
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
+            if store.notifications.isEmpty {
+                Text("都处理完了，没有待你动手的事。")
+                    .font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
+                    .padding(.horizontal, 14).padding(.bottom, 14).padding(.top, 4)
+            } else {
+                ForEach(store.notifications) { n in
+                    Button {
+                        showBell = false
+                        store.go(n.screen)
+                    } label: {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: n.icon)
+                                .font(.system(size: 13)).foregroundColor(Theme.accent)
+                                .frame(width: 18).padding(.top, 1)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(n.text).font(Theme.ui(12.5, .medium)).foregroundColor(Theme.inkPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(n.meta).font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Color.clear.frame(height: 8)
+            }
+        }
+        .frame(width: 290, alignment: .leading)
     }
 
     private var avatar: some View {
-        Text("林")
+        Text(store.userName.isEmpty ? "…" : store.userInitial)
             .font(Theme.display(15, .medium))
             .foregroundColor(.white)
             .frame(width: 34, height: 34)
@@ -68,5 +187,6 @@ struct TopBar: View {
                                startPoint: .topLeading, endPoint: .bottomTrailing)
             )
             .clipShape(Circle())
+            .help(store.userName)
     }
 }

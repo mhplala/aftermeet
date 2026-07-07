@@ -87,15 +87,32 @@ struct Sidebar: View {
                     Circle().fill(Theme.green500.opacity(0.25)).frame(width: 13, height: 13)
                     Circle().fill(Theme.green500).frame(width: 7, height: 7)
                 }
-                Text("秘书在线 · 监听中")
+                Text(store.sync.syncing ? "正在同步飞书会议…" : "秘书在线 · 监听中")
                     .font(Theme.mono(10))
                     .foregroundColor(Theme.onDarkDim)
             }
-            Text("下一场会结束后，我会在 5 分钟内把纪要送来。")
+            Text("会中自动转写；飞书纪要每 15 分钟扫一轮，会后自动送达。")
                 .font(Theme.ui(12))
                 .foregroundColor(Theme.onDarkDim)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button { store.syncNow() } label: {
+                    Text("立即同步")
+                        .font(Theme.mono(10, .semibold))
+                        .foregroundColor(Theme.onDark)
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(store.sync.syncing)
+                Spacer()
+                if !store.sync.lastSyncLabel.isEmpty {
+                    Text(store.sync.lastSyncLabel)
+                        .font(Theme.mono(9)).foregroundColor(Theme.onDarkDim)
+                }
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

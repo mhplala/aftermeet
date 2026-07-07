@@ -42,16 +42,42 @@ struct HomeScreen: View {
 
     // MARK: header
 
+    private var todayOverline: String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日 · EEEE"
+        return f.string(from: Date())
+    }
+
+    private var greeting: String {
+        switch Calendar.current.component(.hour, from: Date()) {
+        case 5..<12:  return "早上好，"
+        case 12..<14: return "中午好，"
+        case 14..<18: return "下午好，"
+        default:      return "晚上好，"
+        }
+    }
+
+    private var subtitle: String {
+        if store.usingRealData {
+            let n = store.pendingCount + store.unclaimedCount
+            let latest = store.meetings.first?.title ?? ""
+            if n > 0 { return "有 \(n) 条待办在等你确认，「\(latest)」的纪要已经备好。" }
+            if !latest.isEmpty { return "待办都处理完了。最新一场是「\(latest)」。" }
+            return "还没有会议纪要，录一场或等飞书同步。"
+        }
+        return "有 5 条待办在等你确认，周三的评审会纪要已经备好。"
+    }
+
     private var header: some View {
         HStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
-                Overline("6月14日 · 周六", tracking: 1.2).padding(.bottom, 8)
-                (Text("早上好，").foregroundColor(Theme.inkPrimary)
-                    + Text("林涛").foregroundColor(Theme.accent).italic()
+                Overline(todayOverline, tracking: 1.2).padding(.bottom, 8)
+                (Text(store.userName.isEmpty ? String(greeting.dropLast()) : greeting)
+                    .foregroundColor(Theme.inkPrimary)
+                    + Text(store.userName).foregroundColor(Theme.accent).italic()
                     + Text("。").foregroundColor(Theme.inkPrimary))
                     .font(Theme.display(42, .medium))
                     .tracking(-1)
-                Text("有 5 条待办在等你确认，周三的评审会纪要已经备好。")
+                Text(subtitle)
                     .font(Theme.display(16, .regular)).italic()
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.top, 10)
@@ -80,7 +106,9 @@ struct HomeScreen: View {
                 StatCard(label: "闭环率", value: "\(store.closeRatePct)", unit: "%",
                          sub: "\(store.crossDone)/\(store.ctodos.count) 已完成", subColor: Theme.green500)
                 StatCard(label: "已同步会议", value: "\(store.meetings.count)", sub: "已生成纪要")
-                StatCard(label: "长期未动", value: "0", sub: "攒数据中")
+                StatCard(label: "长期未动", value: "\(store.staleTodos.count)",
+                         sub: store.maxOverdueDays > 0 ? "最久逾期 \(store.maxOverdueDays) 天" : "暂无逾期",
+                         subColor: store.staleTodos.isEmpty ? Theme.inkTertiary : Theme.danger500)
             }
         } else {
             HStack(spacing: 14) {

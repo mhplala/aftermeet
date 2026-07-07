@@ -69,6 +69,7 @@ struct MenuBarPanel: View {
 
             Divider()
 
+            row("同步飞书会议", "arrow.triangle.2.circlepath") { store.syncNow() }
             row("打开主窗口", "macwindow") { activateMainWindow() }
             row("退出 AfterMeet", "power") { NSApplication.shared.terminate(nil) }
                 .padding(.bottom, 6)

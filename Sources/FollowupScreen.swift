@@ -2,30 +2,33 @@ import SwiftUI
 
 struct FollowupScreen: View {
     @EnvironmentObject var store: AppStore
+    @State private var showForward = false
 
-    private var doneN: Int { store.fitems.filter { $0.done }.count }
-    private var notDoneN: Int { store.fitems.filter { !$0.done }.count }
-    private var rate: Int { Int((Double(doneN) / Double(store.fitems.count) * 100).rounded()) }
+    /// 真数据模式：同名会议重复出现 → 上一场待办的对比卡；否则样例。
+    private var real: AppStore.RecurringCard? { store.recurringCard }
+    private var items: [FollowItem] { real?.items ?? store.fitems }
+
+    private var doneN: Int { items.filter { $0.done }.count }
+    private var notDoneN: Int { items.filter { !$0.done }.count }
+    private var rate: Int { items.isEmpty ? 0 : Int((Double(doneN) / Double(items.count) * 100).rounded()) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Overline("会前 2 小时 · 自动追问", tracking: 1.2).padding(.bottom, 8)
+                Overline("会前 · 自动追问", tracking: 1.2).padding(.bottom, 8)
                 Text("进度追问卡")
                     .font(Theme.display(36, .medium)).tracking(-0.7).foregroundColor(Theme.inkPrimary)
-                Text(store.usingRealData
-                     ? "会前 2 小时，我会盘点上一场同主题会议的待办完成情况，放在这里等你过目。"
-                     : "下周二 10:00「产品周例会」开始前，我整理了上次的待办进度。公开点名前，你先过一眼。")
+                Text(subtitle)
                     .font(Theme.display(15, .regular)).italic()
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.top, 8).padding(.bottom, 24)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if store.usingRealData {
+                if store.usingRealData && real == nil {
                     Card(padding: 0) {
                         EmptyState(icon: "clock.arrow.circlepath",
                                    title: "还没识别到周期性会议",
-                                   message: "会前追问靠「同一主题或组织者的会议再次发生」触发。\n等某场会重复出现，我把上次待办的完成情况整理到这里。")
+                                   message: "会前追问靠「同一主题的会议再次发生」触发。\n等某场会重复出现，我把上次待办的完成情况整理到这里。")
                     }
                 } else {
                     card
@@ -37,13 +40,22 @@ struct FollowupScreen: View {
         }
     }
 
+    private var subtitle: String {
+        if let real {
+            return "「\(real.title)」开过不止一次。上一场的待办进度我盘好了，公开点名前你先过一眼。"
+        }
+        return store.usingRealData
+            ? "会前 2 小时，我会盘点上一场同主题会议的待办完成情况，放在这里等你过目。"
+            : "下周二 10:00「产品周例会」开始前，我整理了上次的待办进度。公开点名前，你先过一眼。"
+    }
+
     private var card: some View {
         VStack(spacing: 0) {
             cardHeader
             Hairline()
             statRow
             Hairline()
-            items
+            itemRows
             footer
         }
         .background(Theme.white)
@@ -61,9 +73,10 @@ struct FollowupScreen: View {
                     .font(.system(size: 19, weight: .regular)).foregroundColor(Theme.brand300)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text("上次「产品周例会」的待办进度")
+                Text("上次「\(real?.title ?? "产品周例会")」的待办进度")
                     .font(Theme.display(17, .medium)).foregroundColor(Theme.inkPrimary)
-                Text("6月3日 周二 · 6 条待办").font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
+                Text(real.map { "\($0.prevMeta)" } ?? "6月3日 周二 · 6 条待办")
+                    .font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()
         }
@@ -94,10 +107,16 @@ struct FollowupScreen: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 
-    private var items: some View {
+    private var itemRows: some View {
         VStack(spacing: 0) {
-            ForEach(Array(store.fitems.enumerated()), id: \.element.id) { idx, f in
-                Button { store.toggleFitem(f.id) } label: {
+            ForEach(Array(items.enumerated()), id: \.element.id) { idx, f in
+                Button {
+                    if let real {
+                        store.toggleFollowItem(text: f.text, meetingTitle: real.title)
+                    } else {
+                        store.toggleFitem(f.id)
+                    }
+                } label: {
                     VStack(spacing: 0) {
                         HStack(spacing: 12) {
                             mark(done: f.done)
@@ -116,7 +135,7 @@ struct FollowupScreen: View {
                         }
                         .padding(.vertical, 12)
                         .contentShape(Rectangle())
-                        if idx != store.fitems.count - 1 { Hairline() }
+                        if idx != items.count - 1 { Hairline() }
                     }
                 }
                 .buttonStyle(.plain)
@@ -150,12 +169,28 @@ struct FollowupScreen: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
                     .hairline(Theme.borderDefault, radius: Theme.rMD)
             }.buttonStyle(.plain).fixedSize()
-            Button { store.showToast("进度追问卡已发到「产品周例会」群") } label: {
+            Button {
+                if real != nil {
+                    showForward = true
+                } else {
+                    store.showToast("进度追问卡已发到「产品周例会」群（演示）")
+                }
+            } label: {
                 Text("发到会议群").font(Theme.ui(13, .semibold)).foregroundColor(.white)
                     .padding(.horizontal, 16).padding(.vertical, 9)
                     .background(Theme.accent)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-            }.buttonStyle(.plain).fixedSize()
+            }
+            .buttonStyle(.plain).fixedSize()
+            .popover(isPresented: $showForward, arrowEdge: .top) {
+                if let real {
+                    ForwardPicker(meetingTitle: real.title,
+                                  copyMarkdown: AppStore.followupMarkdown(real)) { chat in
+                        showForward = false
+                        store.send(markdown: AppStore.followupMarkdown(real), to: chat, what: "进度追问卡")
+                    }
+                }
+            }
         }
         .padding(.horizontal, 24).padding(.vertical, 18)
         .background(Theme.warmWhite)

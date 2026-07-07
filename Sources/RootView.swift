@@ -9,6 +9,7 @@ struct RootView: View {
                 Sidebar()
                 VStack(spacing: 0) {
                     TopBar()
+                        .zIndex(10)      // 搜索结果下拉要压住内容区
                     content
                         .background(Theme.canvas)
                 }
