@@ -123,7 +123,7 @@ struct CrossTodoRow: View {
                         .clipShape(Capsule())
                 }
                 .padding(.horizontal, 22).padding(.vertical, 15)
-                .background(flashing ? Theme.accentSurface
+                .background(flashing ? Theme.blue50
                             : hover ? Color(hex: "f6f7fc") : Theme.white)
                 .animation(.easeOut(duration: 0.4), value: flashing)
                 .contentShape(Rectangle())

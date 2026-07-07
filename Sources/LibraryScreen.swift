@@ -74,7 +74,7 @@ struct LibraryScreen: View {
                 .padding(.horizontal, 18).padding(.vertical, 8)
                 .background(on ? Color.white.opacity(0.92) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rMD - 1, style: .continuous))
-                .shadow(color: on ? Color(hex: "5862a8").opacity(0.14) : .clear, radius: 4, x: 0, y: 2)
+                .shadow(color: on ? Color.black.opacity(0.10) : .clear, radius: 4, x: 0, y: 2)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -139,9 +139,7 @@ struct LibraryScreen: View {
                     .font(Theme.mono(11.5, .semibold))
                     .foregroundColor(Theme.accentInk)
                     .frame(width: 36, height: 36)
-                    .background(
-                        LinearGradient(colors: [Theme.accentSurface, Theme.blue50],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .background(Theme.warmWhite2)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.7), lineWidth: 1))

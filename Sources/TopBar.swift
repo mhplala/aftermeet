@@ -49,15 +49,7 @@ struct TopBar: View {
                 .onSubmit {
                     if let first = store.search(query).first { open(first) }
                 }
-            if query.isEmpty {
-                Text("⌘K")
-                    .font(Theme.mono(10))
-                    .foregroundColor(Theme.inkTertiary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Theme.white)
-                    .hairline(Theme.borderDefault, radius: 3)
-            } else {
+            if !query.isEmpty {
                 Button { query = ""; searchFocused = false } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12)).foregroundColor(Theme.inkMuted)
@@ -202,10 +194,10 @@ struct TopBar: View {
             .font(Theme.display(14.5, .medium))
             .foregroundColor(.white)
             .frame(width: 33, height: 33)
-            .background(Theme.greenGrad)
+            .background(Theme.inkGrad)
             .clipShape(Circle())
             .overlay(Circle().strokeBorder(Color.white.opacity(0.8), lineWidth: 1.5))
-            .glow(Theme.accent, radius: 8, opacity: 0.3)
+            .glow(Color.black, radius: 6, opacity: 0.22)
             .help(store.userName)
     }
 }

@@ -83,9 +83,9 @@ private struct SummaryBlock: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 17).padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(hex: "f4faf7"))
+            .background(Color(hex: "fafafa"))
             .clipShape(RoundedRectangle(cornerRadius: Theme.rLG - 2, style: .continuous))
-            .hairline(Theme.accent.opacity(0.14), radius: Theme.rLG - 2)
+            .hairline(Theme.borderWhisper, radius: Theme.rLG - 2)
     }
 }
 
@@ -244,9 +244,9 @@ private struct QuoteBlock: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 19).padding(.vertical, 15)
-        .background(Color(hex: "fbf7f2"))
+        .background(Color(hex: "fafafa"))
         .clipShape(RoundedRectangle(cornerRadius: Theme.rLG - 2, style: .continuous))
-        .hairline(Theme.brand500.opacity(0.18), radius: Theme.rLG - 2)
+        .hairline(Theme.borderWhisper, radius: Theme.rLG - 2)
     }
 }
 

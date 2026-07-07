@@ -55,7 +55,7 @@ struct RecStrip: View {
         case .idle:
             Circle().fill(Theme.inkMuted).frame(width: 8, height: 8)
         case .detected:
-            PulsingDot(color: Theme.accent)
+            PulsingDot(color: Theme.blue500)
         case .recording:
             PulsingDot(color: Theme.danger500)
         case .refining:
@@ -70,7 +70,7 @@ struct RecStrip: View {
         case .idle:
             Text("录制").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkSecondary)
         case .detected:
-            Text("检测到会议 · 点击开始记录").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.accentInk)
+            Text("检测到会议 · 点击开始记录").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.blue700)
         case .recording:
             HStack(spacing: 7) {
                 Text("录制中").font(Theme.ui(12.5, .semibold))
@@ -86,16 +86,16 @@ struct RecStrip: View {
     private var background: AnyShapeStyle {
         switch phase {
         case .idle, .refining: return AnyShapeStyle(Color.white.opacity(0.58))
-        case .detected:        return AnyShapeStyle(Theme.accentSurface)
+        case .detected:        return AnyShapeStyle(Theme.blue50)
         case .recording:       return AnyShapeStyle(Theme.danger50)
-        case .done:            return AnyShapeStyle(Theme.greenGrad)
+        case .done:            return AnyShapeStyle(Theme.inkGrad)
         }
     }
 
     private var borderColor: Color {
         switch phase {
         case .idle, .refining: return Theme.glassBorder
-        case .detected:        return Theme.accent.opacity(0.4)
+        case .detected:        return Theme.blue500.opacity(0.4)
         case .recording:       return Theme.danger500.opacity(0.4)
         case .done:            return .clear
         }
@@ -103,10 +103,10 @@ struct RecStrip: View {
 
     private var glowColor: Color {
         switch phase {
-        case .idle, .refining: return Color(hex: "5862a8").opacity(0.10)
-        case .detected:        return Theme.accent.opacity(0.25)
+        case .idle, .refining: return Color.black.opacity(0.08)
+        case .detected:        return Theme.blue500.opacity(0.22)
         case .recording:       return Theme.danger500.opacity(0.30)
-        case .done:            return Theme.accent.opacity(0.40)
+        case .done:            return Color.black.opacity(0.30)
         }
     }
 }
@@ -248,12 +248,9 @@ struct RecPanel: View {
             }
             .foregroundColor(.white)
             .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(cap.isCapturing
-                        ? AnyShapeStyle(LinearGradient(colors: [Color(hex: "f0607a"), Color(hex: "d63a55")],
-                                                       startPoint: .topLeading, endPoint: .bottomTrailing))
-                        : AnyShapeStyle(Theme.greenGrad))
+            .background(cap.isCapturing ? AnyShapeStyle(Theme.danger500) : AnyShapeStyle(Theme.inkGrad))
             .clipShape(Capsule())
-            .glow(cap.isCapturing ? Theme.danger500 : Theme.accent, radius: 10, opacity: 0.35)
+            .glow(cap.isCapturing ? Theme.danger500 : Color.black, radius: 9, opacity: 0.28)
         }
         .buttonStyle(.plain)
         .disabled(store.refining)

@@ -39,7 +39,6 @@ struct DetailScreen: View {
                     HStack(spacing: 5) {
                         Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
                         Text("返回").font(Theme.ui(11.5, .semibold))
-                        Text("⌘[").font(Theme.mono(9)).foregroundColor(Theme.inkMuted)
                     }
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -363,9 +362,9 @@ struct DetailScreen: View {
             Button { store.confirmAll() } label: {
                 Text("全部确认并建任务").font(Theme.ui(13, .semibold)).foregroundColor(.white)
                     .padding(.horizontal, 18).padding(.vertical, 9)
-                    .background(Theme.greenGrad)
+                    .background(Theme.inkGrad)
                     .clipShape(Capsule())
-                    .glow(Theme.accent, radius: 11, opacity: 0.38)
+                    .glow(Color.black, radius: 9, opacity: 0.28)
             }.buttonStyle(.plain)
         }
         .padding(.leading, 21).padding(.trailing, 13).padding(.vertical, 12)

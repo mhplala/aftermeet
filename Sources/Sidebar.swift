@@ -66,9 +66,9 @@ struct Sidebar: View {
         HStack(spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Theme.greenGrad)
+                    .fill(Theme.inkGrad)
                     .frame(width: 30, height: 30)
-                    .glow(Theme.accent, radius: 10, opacity: 0.35)
+                    .glow(Color.black, radius: 8, opacity: 0.25)
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white)
@@ -122,7 +122,7 @@ struct Sidebar: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
             .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-        .shadow(color: Color(hex: "282e5a").opacity(0.28), radius: 14, x: 0, y: 8)
+        .shadow(color: Color.black.opacity(0.22), radius: 12, x: 0, y: 7)
     }
 }
 
@@ -166,7 +166,7 @@ struct NavItem: View {
                         .strokeBorder(Color.white.opacity(0.9), lineWidth: 1)
                 }
             }
-            .shadow(color: active ? Color(hex: "5862a8").opacity(0.12) : .clear, radius: 6, x: 0, y: 3)
+            .shadow(color: active ? Color.black.opacity(0.08) : .clear, radius: 5, x: 0, y: 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
