@@ -266,28 +266,26 @@ struct HomeScreen: View {
         return Button { store.go(.followup) } label: {
             HStack(spacing: 16) {
                 Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 21, weight: .regular))
-                    .foregroundColor(Theme.accentGlow)
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundColor(Theme.green500)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(Theme.display(16, .medium))
-                        .foregroundColor(Theme.onDark)
+                        .font(Theme.display(15.5, .medium))
+                        .foregroundColor(Theme.inkPrimary)
                         .lineLimit(1)
                     Text(sub)
                         .font(Theme.ui(12.5))
-                        .foregroundColor(Theme.onDarkDim)
+                        .foregroundColor(Theme.inkSecondary)
                 }
                 Spacer()
                 Text("查看 →")
                     .font(Theme.ui(12.5, .semibold))
-                    .foregroundColor(Theme.onDark)
+                    .foregroundColor(Theme.inkPrimary)
             }
-            .padding(.horizontal, 22).padding(.vertical, 18)
-            .background(Theme.inkGlass)
+            .padding(.horizontal, 22).padding(.vertical, 17)
+            .background(Theme.warmWhite2)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-            .cardShadow()
+            .hairline(Theme.borderWhisper, radius: Theme.rLG)
         }
         .buttonStyle(.plain)
     }
