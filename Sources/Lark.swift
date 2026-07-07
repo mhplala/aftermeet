@@ -177,13 +177,30 @@ enum Lark {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: cli)
             p.arguments = args + ["--format", "json"]
-            let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = FileHandle.nullDevice     // 没人读的 stderr 管道满了会憋死进程
+
+            // 边跑边读：输出超过 64KB 管道缓冲（14 天日程 ~200KB）时，
+            // “等退出再读”会互相卡死到超时 —— 必须并发接流。
+            var buf = Data()
+            let lock = NSLock()
+            out.fileHandleForReading.readabilityHandler = { h in
+                let d = h.availableData
+                if !d.isEmpty { lock.lock(); buf.append(d); lock.unlock() }
+            }
+
             do { try p.run() } catch { return nil }
             let deadline = Date().addingTimeInterval(timeout)
             while p.isRunning && Date() < deadline { usleep(100_000) }
             if p.isRunning { p.terminate() }
-            let d = out.fileHandleForReading.readDataToEndOfFile()
-            return (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+
+            out.fileHandleForReading.readabilityHandler = nil
+            if let rest = try? out.fileHandleForReading.readToEnd(), !rest.isEmpty {
+                lock.lock(); buf.append(rest); lock.unlock()
+            }
+            lock.lock(); let data = buf; lock.unlock()
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         }.value
     }
 }
