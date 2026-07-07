@@ -289,7 +289,7 @@ extension MeetingVM {
     init(live note: RefinedNote, transcript: String, durationSec: Int, now: Date, title: String? = nil) {
         let df = DateFormatter()
         df.locale = Locale(identifier: "zh_CN")
-        df.dateFormat = "M月d日 EEE"
+        df.dateFormat = "M月d日 EEE HH:mm"
         let dateStr = df.string(from: now)
         let dur = String(format: "%d:%02d", durationSec / 60, durationSec % 60)
 
