@@ -175,6 +175,9 @@ final class AppStore: ObservableObject {
     // 搜索跳到待办中心时闪一下目标行
     @Published var flashTodoText: String? = nil
 
+    // 本地录制会议的时长（秒），启动加载时缓存 —— 日历比对不再读盘
+    private var liveDurations: [String: Int] = [:]
+
     // 派生缓存：重活（正则/日期解析/分组）只在数据变化时算一次，不在 body 里跑
     @Published private(set) var recurringCardCache: RecurringCard? = nil
     @Published private(set) var meetingsByDayCache: [(day: String, items: [MeetingVM])] = []
@@ -213,7 +216,9 @@ final class AppStore: ObservableObject {
 
     init() {
         let reals = RealData.load().map { MeetingVM(real: $0) }
-        let live = LiveStore.load()
+        let stored = LiveStore.load()
+        liveDurations = Dictionary(uniqueKeysWithValues: stored.map { ($0.id, $0.durationSec) })
+        let live = stored
             .sorted { $0.timestamp > $1.timestamp }                       // newest first
             .map { MeetingVM(live: $0.note, transcript: $0.transcript, durationSec: $0.durationSec,
                              now: Date(timeIntervalSince1970: $0.timestamp), title: $0.title) }
@@ -276,10 +281,12 @@ final class AppStore: ObservableObject {
                 if userName.isEmpty { capture.setMeetingName(note.title) }   // 豆包 names the file by content
                 let now = stopped
                 let title = userName.isEmpty ? note.title : userName
+                let storedID = "live-\(Int(now.timeIntervalSince1970))"
                 LiveStore.append(StoredLiveMeeting(                          // persist → survives a restart
-                    id: "live-\(Int(now.timeIntervalSince1970))", title: title,
+                    id: storedID, title: title,
                     timestamp: now.timeIntervalSince1970, durationSec: durationSec,
                     transcript: transcript, note: note))
+                liveDurations[storedID] = durationSec
                 let vm = MeetingVM(live: note, transcript: transcript, durationSec: durationSec,
                                    now: now, title: title)
                 addLiveMeeting(vm)
@@ -474,7 +481,7 @@ final class AppStore: ObservableObject {
         calendarChecked.insert(m.id)
         guard let ts = Double(m.id.dropFirst("live-".count)) else { return }
         Task {
-            let dur = LiveStore.load().first { $0.id == m.id }?.durationSec ?? 600
+            let dur = liveDurations[m.id] ?? 600
             // 存的时间戳是停录时刻 → 录音区间是 [ts - 时长, ts]
             let recStart = Date(timeIntervalSince1970: ts - Double(dur))
             let candidates = await Lark.eventsOverlapping(start: recStart, durationSec: dur)

@@ -12,7 +12,7 @@ struct DetailScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 14) {
                     breadcrumb
                     titleRow
                     metaRow
