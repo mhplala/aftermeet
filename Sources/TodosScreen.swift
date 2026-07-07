@@ -58,7 +58,7 @@ struct TodosScreen: View {
     }
 
     private var list: some View {
-        VStack(spacing: 0) {
+        LazyVStack(spacing: 0) {
             ForEach(Array(visible.enumerated()), id: \.element.id) { idx, t in
                 CrossTodoRow(todo: t, last: idx == visible.count - 1)
             }

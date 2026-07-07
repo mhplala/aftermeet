@@ -17,7 +17,7 @@ struct LibraryScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 header
                 tabs.padding(.top, 18).padding(.bottom, 6)
                 if store.libraryRawTab {

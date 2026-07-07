@@ -175,6 +175,12 @@ final class AppStore: ObservableObject {
     // 搜索跳到待办中心时闪一下目标行
     @Published var flashTodoText: String? = nil
 
+    // 派生缓存：重活（正则/日期解析/分组）只在数据变化时算一次，不在 body 里跑
+    @Published private(set) var recurringCardCache: RecurringCard? = nil
+    @Published private(set) var meetingsByDayCache: [(day: String, items: [MeetingVM])] = []
+    @Published private(set) var staleTodosCache: [CrossTodo] = []
+    @Published private(set) var maxOverdueDaysCache = 0
+
     // 时间戳 × 日历猜出来的改名建议：meetingID → 日历日程名
     @Published var calendarSuggestions: [String: String] = [:]
     private var calendarChecked = Set<String>()
@@ -236,6 +242,7 @@ final class AppStore: ObservableObject {
         sync.start()
         buildArchiveIndex()      // 转写档案全文进搜索
         loadUpcomingEvents()     // 未来 7 天日程（会前追问交叉比对）
+        refreshDerived()
     }
 
     /// 自动同步拉到新会 → 并进列表并提示（本地捕获的仍排最上面）。
@@ -247,6 +254,7 @@ final class AppStore: ObservableObject {
         meetings.insert(contentsOf: vms, at: liveCount)
         ctodos = AppStore.deriveCrossTodos(from: meetings)
         dtodos = current.dtodos
+        refreshDerived()
         showToast("已同步 \(vms.count) 场新会议")
     }
 
@@ -291,6 +299,7 @@ final class AppStore: ObservableObject {
         ctodos = AppStore.deriveCrossTodos(from: meetings)
         if wasEmpty { selectedMeeting = 0; dtodos = vm.dtodos }
         else { selectedMeeting += 1 }                // 保持用户正看的那场不被顶掉
+        refreshDerived()
     }
 
     // MARK: - Auto meeting detection
@@ -344,15 +353,23 @@ final class AppStore: ObservableObject {
 
     // MARK: - 每日综述
 
-    /// Meetings grouped by day (dayChip), newest day first — preserves the meetings-array order.
-    var meetingsByDay: [(day: String, items: [MeetingVM])] {
+    var meetingsByDay: [(day: String, items: [MeetingVM])] { meetingsByDayCache }
+
+    /// 数据变化后重算全部派生缓存（分组 / 追问卡 / 逾期统计）。
+    func refreshDerived() {
         var order: [String] = []
         var map: [String: [MeetingVM]] = [:]
         for m in meetings where m.dayChip != "·" {
             if map[m.dayChip] == nil { order.append(m.dayChip) }
             map[m.dayChip, default: []].append(m)
         }
-        return order.map { (day: $0, items: map[$0] ?? []) }
+        meetingsByDayCache = order.map { (day: $0, items: map[$0] ?? []) }
+
+        staleTodosCache = ctodos.filter { $0.status != .done && (Self.overdueDays(due: $0.due) ?? 0) > 3 }
+        maxOverdueDaysCache = ctodos.filter { $0.status != .done }
+            .compactMap { Self.overdueDays(due: $0.due) }.filter { $0 > 0 }.max() ?? 0
+
+        recurringCardCache = computeRecurringCard()
     }
 
     /// Generate (or reuse cached) the day's digest by synthesizing all its meetings via 豆包.
@@ -485,6 +502,7 @@ final class AppStore: ObservableObject {
         LiveStore.rename(id: id, title: title)
         ctodos = AppStore.deriveCrossTodos(from: meetings)   // 待办里的会议标签同步
         if i == selectedMeeting { dtodos = current.dtodos }
+        refreshDerived()
     }
 
     /// 录制条完成态被点击 → 打开刚生成的纪要
@@ -598,6 +616,7 @@ final class AppStore: ObservableObject {
             ctodos[i].wasBeforeDone = ctodos[i].status
             ctodos[i].status = .done
         }
+        refreshDerived()
     }
 
     func toggleFitem(_ id: Int) {
@@ -658,13 +677,8 @@ final class AppStore: ObservableObject {
     }
 
     /// 长期未动：逾期超过 3 天还没闭环的待办（真数据模式的指标卡用）。
-    var staleTodos: [CrossTodo] {
-        ctodos.filter { $0.status != .done && (Self.overdueDays(due: $0.due) ?? 0) > 3 }
-    }
-    var maxOverdueDays: Int {
-        ctodos.filter { $0.status != .done }
-            .compactMap { Self.overdueDays(due: $0.due) }.filter { $0 > 0 }.max() ?? 0
-    }
+    var staleTodos: [CrossTodo] { staleTodosCache }
+    var maxOverdueDays: Int { maxOverdueDaysCache }
 
     // MARK: - 手动同步（菜单栏 / 铃铛里点）
 
@@ -693,7 +707,10 @@ final class AppStore: ObservableObject {
     @Published var upcomingEvents: [Lark.UpcomingEvent] = []
 
     func loadUpcomingEvents() {
-        Task { upcomingEvents = await Lark.upcomingEvents() }
+        Task {
+            upcomingEvents = await Lark.upcomingEvents()
+            refreshDerived()
+        }
     }
 
     /// 标题规范化：标题是模型按内容起的，同系列两场会几乎不会逐字相同 ——
@@ -724,7 +741,9 @@ final class AppStore: ObservableObject {
         return common >= 12 && Double(common) >= 0.7 * Double(min(a.count, b.count))
     }
 
-    var recurringCard: RecurringCard? {
+    var recurringCard: RecurringCard? { recurringCardCache }
+
+    private func computeRecurringCard() -> RecurringCard? {
         guard usingRealData else { return nil }
         let normed = meetings.map { AppStore.normalizedTitle($0.title) }   // meetings 已按新→旧
 
