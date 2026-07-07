@@ -208,18 +208,10 @@ enum Lark {
 // MARK: - 已建任务的台账：meetingID|todoID → 任务 guid，防止重复建卡
 
 enum TaskLinkStore {
-    static var fileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("AfterMeet/task-links.json")
-    }
     static func load() -> [String: String] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let m = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
-        return m
+        DB.shared.dictAll("task_links", keyCol: "key", valCol: "guid")
     }
     static func save(_ m: [String: String]) {
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
-                                                 withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(m) { try? data.write(to: fileURL) }
+        for (k, v) in m { DB.shared.setRow("task_links", keyCol: "key", valCol: "guid", key: k, value: v) }
     }
 }

@@ -883,11 +883,17 @@ final class AppStore: ObservableObject {
         guard !tokens.isEmpty else { return [] }
         var out: [SearchHit] = []
 
-        // —— 会议：标题 100 / 摘要 40 / 逐字稿 12，全部关键词都命中才算；新会加一点权重
-        for (idx, m) in meetings.enumerated() {
+        // —— 会议：候选集来自 SQLite FTS5（≥3 字走 trigram 索引，短词 LIKE），
+        //    打分与摘录用内存原文（标题 100 / 摘要 40 / 逐字稿 12 + 新近度）
+        let idIndex = Dictionary(uniqueKeysWithValues: meetings.enumerated().map { ($1.id, $0) })
+        let candidateIDs = usingRealData ? DB.shared.searchMeetings(tokens: tokens)
+                                         : meetings.map { $0.id }      // 演示数据不在库里，全量内存匹配
+        for id in candidateIDs {
+            guard let idx = idIndex[id] else { continue }
+            let m = meetings[idx]
             let lcTitle = m.title.lowercased()
             let lcSummary = m.summary.lowercased()
-            let lcBody = m.searchBlob.isEmpty ? "" : m.searchBlob
+            let lcBody = m.rawTranscript.lowercased()
             var score = 0
             var ok = true
             for t in tokens {
@@ -899,11 +905,10 @@ final class AppStore: ObservableObject {
             guard ok else { continue }
             score += max(0, 20 - idx)                                 // 越新越靠前
             let snippet: AttributedString? = {
-                if tokens.contains(where: { m.summary.lowercased().contains($0) }) {
+                if tokens.contains(where: { lcSummary.contains($0) }) {
                     return AppStore.snippet(in: m.summary, tokens: tokens)
                 }
-                if !m.rawTranscript.isEmpty,
-                   tokens.contains(where: { !$0.isEmpty && m.searchBlob.contains($0) }) {
+                if !m.rawTranscript.isEmpty, tokens.contains(where: { lcBody.contains($0) }) {
                     return AppStore.snippet(in: m.rawTranscript, tokens: tokens)
                 }
                 return nil

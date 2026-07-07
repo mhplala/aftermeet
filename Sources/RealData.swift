@@ -89,23 +89,21 @@ struct NoteBlock: Codable {
 }
 
 enum RealData {
-    /// ~/Library/Application Support/AfterMeet/meetings.json
-    static var fileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("AfterMeet/meetings.json")
-    }
     static func load() -> [RealMeeting] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let store = try? JSONDecoder().decode(RealStore.self, from: data)
-        else { return [] }
-        return store.meetings
+        let dec = JSONDecoder()
+        return DB.shared.meetingPayloads(kind: "feishu").compactMap { row in
+            row.payload.data(using: .utf8).flatMap { try? dec.decode(RealMeeting.self, from: $0) }
+        }
     }
     static func save(_ meetings: [RealMeeting]) {
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
-                                                 withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(RealStore(meetings: meetings)) {
-            try? data.write(to: fileURL)
+        let enc = JSONEncoder()
+        let rows = meetings.enumerated().compactMap { i, m -> (String, Double, String, DB.FTSDoc)? in
+            guard let d = try? enc.encode(m), let s = String(data: d, encoding: .utf8) else { return nil }
+            return (m.meeting_id, Double(1_000_000 - i), s,
+                    DB.FTSDoc(title: m.title, summary: m.summary,
+                              transcript: m.excerpts.map { $0.text }.joined(separator: "\n")))
         }
+        DB.shared.replaceMeetings(kind: "feishu", rows: rows)
     }
 }
 
@@ -121,55 +119,48 @@ struct StoredLiveMeeting: Codable {
 }
 
 enum LiveStore {
-    /// ~/Library/Application Support/AfterMeet/live-meetings.json — separate from sync.sh's meetings.json
-    /// so a Feishu sync can never clobber locally-captured meetings.
-    static var fileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("AfterMeet/live-meetings.json")
+    private static func ftsDoc(_ m: StoredLiveMeeting) -> DB.FTSDoc {
+        DB.FTSDoc(title: m.title,
+                  summary: m.note.summary ?? m.note.blocks?.first(where: { $0.type == "summary" })?.text ?? "",
+                  transcript: m.transcript)
     }
-    static func load() -> [StoredLiveMeeting] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        let dec = JSONDecoder()
-        if let items = try? dec.decode([StoredLiveMeeting].self, from: data) { return items }
-        // one corrupt record must not drop them all — decode element-by-element, skip only the broken ones
-        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return [] }
-        return raw.compactMap { obj in
-            (try? JSONSerialization.data(withJSONObject: obj)).flatMap { try? dec.decode(StoredLiveMeeting.self, from: $0) }
-        }
-    }
-    static func rename(id: String, title: String) {
-        let items = load().map { m -> StoredLiveMeeting in
-            guard m.id == id else { return m }
-            return StoredLiveMeeting(id: m.id, title: title, timestamp: m.timestamp,
-                                     durationSec: m.durationSec, transcript: m.transcript, note: m.note)
-        }
-        if let data = try? JSONEncoder().encode(items) { try? data.write(to: fileURL) }
+    private static func upsert(_ m: StoredLiveMeeting) {
+        guard let d = try? JSONEncoder().encode(m), let s = String(data: d, encoding: .utf8) else { return }
+        DB.shared.upsertMeeting(id: m.id, kind: "live", sortTs: m.timestamp, payload: s, fts: ftsDoc(m))
     }
 
-    static func append(_ m: StoredLiveMeeting) {
-        var items = load()
-        items.append(m)
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
-                                                 withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(items) { try? data.write(to: fileURL) }
+    static func load() -> [StoredLiveMeeting] {
+        let dec = JSONDecoder()
+        return DB.shared.meetingPayloads(kind: "live").compactMap { row in
+            row.payload.data(using: .utf8).flatMap { try? dec.decode(StoredLiveMeeting.self, from: $0) }
+        }
+    }
+    /// 追加一场会 = 插一行（不再整文件重写）。
+    static func append(_ m: StoredLiveMeeting) { upsert(m) }
+
+    static func rename(id: String, title: String) {
+        guard let old = load().first(where: { $0.id == id }) else { return }
+        upsert(StoredLiveMeeting(id: old.id, title: title, timestamp: old.timestamp,
+                                 durationSec: old.durationSec, transcript: old.transcript, note: old.note))
     }
 }
 
 // MARK: - 每日综述 cache — one digest (block list) per day, keyed by dayChip ("6/22")
 
 enum DailyStore {
-    static var fileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("AfterMeet/daily-digests.json")
-    }
     static func load() -> [String: [NoteBlock]] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let m = try? JSONDecoder().decode([String: [NoteBlock]].self, from: data) else { return [:] }
-        return m
+        let dec = JSONDecoder()
+        return DB.shared.dictAll("daily", keyCol: "day", valCol: "blocks").compactMapValues {
+            $0.data(using: .utf8).flatMap { try? dec.decode([NoteBlock].self, from: $0) }
+        }
     }
     static func save(_ m: [String: [NoteBlock]]) {
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(m) { try? data.write(to: fileURL) }
+        let enc = JSONEncoder()
+        for (day, blocks) in m {
+            if let d = try? enc.encode(blocks), let s = String(data: d, encoding: .utf8) {
+                DB.shared.setRow("daily", keyCol: "day", valCol: "blocks", key: day, value: s)
+            }
+        }
     }
 }
 
@@ -183,18 +174,19 @@ struct QATurn: Identifiable, Codable {
 }
 
 enum QAStore {
-    static var fileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("AfterMeet/qa.json")
-    }
     static func load() -> [String: [QATurn]] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let m = try? JSONDecoder().decode([String: [QATurn]].self, from: data) else { return [:] }
-        return m
+        let dec = JSONDecoder()
+        return DB.shared.dictAll("qa", keyCol: "meeting_id", valCol: "turns").compactMapValues {
+            $0.data(using: .utf8).flatMap { try? dec.decode([QATurn].self, from: $0) }
+        }
     }
     static func save(_ m: [String: [QATurn]]) {
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(m) { try? data.write(to: fileURL) }
+        let enc = JSONEncoder()
+        for (id, turns) in m {
+            if let d = try? enc.encode(turns), let s = String(data: d, encoding: .utf8) {
+                DB.shared.setRow("qa", keyCol: "meeting_id", valCol: "turns", key: id, value: s)
+            }
+        }
     }
 }
 
@@ -282,7 +274,6 @@ extension MeetingVM {
         let people = m.participants.map { "\($0)人" } ?? ""
         self.recentMeta = [m.dateLabel ?? "", people, "\(m.todos.count) 条待办"]
             .filter { !$0.isEmpty }.joined(separator: " · ")
-        self.searchBlob = "\(self.title) \(self.summary) \(self.rawTranscript)".lowercased()
     }
 
     /// Build a meeting from a locally-captured + refined live session.
@@ -319,7 +310,6 @@ extension MeetingVM {
         self.dtodos = MeetingVM.mapTodos(note.todos)
         self.dayChip = MeetingVM.dayChip(from: dateStr)
         self.recentMeta = [dateStr, "时长 \(dur)", "\(note.todos.count) 条待办"].joined(separator: " · ")
-        self.searchBlob = "\(self.title) \(self.summary) \(transcript)".lowercased()
     }
 
     static func dayChip(from label: String?) -> String {
@@ -394,18 +384,14 @@ extension MeetingVM {
 // MARK: - 日历缓存 — 前后 7 天日程落盘，启动秒开
 
 enum CalCache {
-    static var fileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("AfterMeet/calendar-cache.json")
-    }
     static func load() -> [Lark.CalEvent] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let events = try? JSONDecoder().decode([Lark.CalEvent].self, from: data) else { return [] }
+        guard let s = DB.shared.kvGet("cal_cache"),
+              let events = try? JSONDecoder().decode([Lark.CalEvent].self, from: Data(s.utf8)) else { return [] }
         return events
     }
     static func save(_ events: [Lark.CalEvent]) {
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
-                                                 withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(events) { try? data.write(to: fileURL) }
+        if let d = try? JSONEncoder().encode(events), let s = String(data: d, encoding: .utf8) {
+            DB.shared.kvSet("cal_cache", s)
+        }
     }
 }
