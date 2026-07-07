@@ -70,9 +70,10 @@ struct Sidebar: View {
         HStack(spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Theme.inkGrad)
+                    .fill(LinearGradient(colors: [Color(hex: "5b93f8"), Color(hex: "2e6ae0")],
+                                         startPoint: .top, endPoint: .bottom))
                     .frame(width: 30, height: 30)
-                    .glow(Color.black, radius: 8, opacity: 0.25)
+                    .glow(Theme.blue500, radius: 8, opacity: 0.30)
                 Image(systemName: "waveform")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
