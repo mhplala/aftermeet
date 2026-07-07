@@ -30,7 +30,7 @@ struct RecStrip: View {
             .background(background)
             .clipShape(Capsule())
             .overlay(Capsule().strokeBorder(borderColor, lineWidth: 1))
-            .shadow(color: glowColor, radius: 9, x: 0, y: 4)
+            .shadow(color: glowColor, radius: 7, x: 0, y: 3)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -85,7 +85,7 @@ struct RecStrip: View {
 
     private var background: AnyShapeStyle {
         switch phase {
-        case .idle, .refining: return AnyShapeStyle(Color.white.opacity(0.58))
+        case .idle, .refining: return AnyShapeStyle(Color.white.opacity(0.72))
         case .detected:        return AnyShapeStyle(Theme.blue50)
         case .recording:       return AnyShapeStyle(Theme.danger50)
         case .done:            return AnyShapeStyle(Theme.inkGrad)
@@ -94,7 +94,7 @@ struct RecStrip: View {
 
     private var borderColor: Color {
         switch phase {
-        case .idle, .refining: return Theme.glassBorder
+        case .idle, .refining: return Theme.borderDefault
         case .detected:        return Theme.blue500.opacity(0.4)
         case .recording:       return Theme.danger500.opacity(0.4)
         case .done:            return .clear
@@ -103,7 +103,7 @@ struct RecStrip: View {
 
     private var glowColor: Color {
         switch phase {
-        case .idle, .refining: return Color.black.opacity(0.08)
+        case .idle, .refining: return Color.black.opacity(0.14)
         case .detected:        return Theme.blue500.opacity(0.22)
         case .recording:       return Theme.danger500.opacity(0.30)
         case .done:            return Color.black.opacity(0.30)

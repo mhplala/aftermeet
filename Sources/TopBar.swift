@@ -57,9 +57,10 @@ struct TopBar: View {
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 7)
-        .background(Color.white.opacity(0.55))
+        .background(Color.white.opacity(0.72))
         .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(Theme.glassBorder, lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.10), radius: 5, x: 0, y: 2)
         .overlay(alignment: .topLeading) { results.offset(y: 40) }
     }
 
@@ -135,9 +136,10 @@ struct TopBar: View {
                     .font(.system(size: 14, weight: .regular))
                     .foregroundColor(Theme.inkPrimary.opacity(0.8))
                     .frame(width: 33, height: 33)
-                    .background(bellHover ? Color.white.opacity(0.85) : Color.white.opacity(0.58))
+                    .background(bellHover ? Color.white.opacity(0.9) : Color.white.opacity(0.72))
                     .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(Theme.glassBorder, lineWidth: 1))
+                    .overlay(Circle().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                    .shadow(color: Color.black.opacity(0.10), radius: 5, x: 0, y: 2)
                 if !store.notifications.isEmpty {
                     Circle().fill(Theme.danger500).frame(width: 7, height: 7)
                         .glow(Theme.danger500, radius: 5, opacity: 0.7)
