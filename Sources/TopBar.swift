@@ -22,7 +22,6 @@ struct TopBar: View {
                 .font(Theme.mono(11.5))
                 .foregroundColor(Theme.inkTertiary)
             bell
-            avatar
         }
         .padding(.horizontal, 24)
         .frame(height: 60)
@@ -189,15 +188,4 @@ struct TopBar: View {
         .frame(width: 290, alignment: .leading)
     }
 
-    private var avatar: some View {
-        Text(store.userName.isEmpty ? "…" : store.userInitial)
-            .font(Theme.display(14.5, .medium))
-            .foregroundColor(.white)
-            .frame(width: 33, height: 33)
-            .background(Theme.inkGrad)
-            .clipShape(Circle())
-            .overlay(Circle().strokeBorder(Color.white.opacity(0.8), lineWidth: 1.5))
-            .glow(Color.black, radius: 6, opacity: 0.22)
-            .help(store.userName)
-    }
 }

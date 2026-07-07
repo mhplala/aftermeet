@@ -222,13 +222,21 @@ extension MeetingVM {
             return palette[sum % palette.count]
         }
         return ts.enumerated().map { idx, t in
-            let unclaimed = (t.owner == nil) || (t.confidence?.lowercased() == "low")
+            // 豆包偶尔把 owner 写成字符串 "null"/"无"，一律当未指派
+            let rawOwner = t.owner?.trimmingCharacters(in: .whitespaces)
+            let owner: String? = {
+                guard let o = rawOwner, !o.isEmpty,
+                      !["null", "none", "无", "待定", "tbd", "n/a"].contains(o.lowercased())
+                else { return nil }
+                return o
+            }()
+            let unclaimed = (owner == nil) || (t.confidence?.lowercased() == "low")
             if unclaimed {
                 return DetailTodo(id: idx + 1, owner: nil, initial: "?", color: Color(hex: "a86a1a"),
                                   text: t.text, due: t.due ?? "—", status: .unclaimed, orig: .unclaimed,
                                   note: "置信度低 · 未识别明确负责人")
             }
-            let name = t.owner ?? ""
+            let name = owner ?? ""
             return DetailTodo(id: idx + 1, owner: name, initial: String(name.prefix(1)),
                               color: colorFor(name), text: t.text, due: t.due ?? "—",
                               status: .pending, orig: .pending)

@@ -231,6 +231,7 @@ final class AppStore: ObservableObject {
         syncForward = sync.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         sync.start()
         buildArchiveIndex()      // 转写档案全文进搜索
+        loadUpcomingEvents()     // 未来 7 天日程（会前追问交叉比对）
     }
 
     /// 自动同步拉到新会 → 并进列表并提示（本地捕获的仍排最上面）。
@@ -635,6 +636,14 @@ final class AppStore: ObservableObject {
         let title: String
         let prevMeta: String
         let items: [FollowItem]
+        var upcomingLabel: String? = nil   // 日历里下一场的时间（交叉比对命中时有值）
+    }
+
+    // 未来 7 天日历日程，启动时拉一次（会前追问的 ground truth）
+    @Published var upcomingEvents: [Lark.UpcomingEvent] = []
+
+    func loadUpcomingEvents() {
+        Task { upcomingEvents = await Lark.upcomingEvents() }
     }
 
     /// 标题规范化：标题是模型按内容起的，同系列两场会几乎不会逐字相同 ——
@@ -645,6 +654,8 @@ final class AppStore: ObservableObject {
                                    with: "", options: .regularExpression)
         s = s.replacingOccurrences(of: #"\d{1,2}[月/]\d{1,2}日?"#, with: "", options: .regularExpression)
         s = s.replacingOccurrences(of: #"[qQ][1-4]"#, with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"vol\.?\s*\d+"#, with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"第?\d+[期次轮]"#, with: "", options: .regularExpression)
         for suffix in ["会议纪要", "研讨会议", "沟通会议", "对齐会议", "同步会议", "评审会议",
                        "复盘会议", "规划会议", "讨论会", "研讨会", "同步会", "评审会",
                        "复盘会", "规划会", "分享会", "周会", "例会", "会议", "纪要", "会"] {
@@ -653,31 +664,50 @@ final class AppStore: ObservableObject {
         return s.filter { !$0.isWhitespace && !"·-—:：()（）&/".contains($0) }
     }
 
-    /// 同一系列：规范化后相等，或共同前缀 ≥ 8 字符（自动命名下的宽容匹配）。
+    /// 同一系列：规范化后相等 / 一方包含另一方 / 共同前缀足够长且占短标题 70% 以上。
+    /// （旧版「前缀 ≥8」会把 Live Studio 开头的两个不同会误判成一个系列）
     static func sameSeries(_ a: String, _ b: String) -> Bool {
-        guard !a.isEmpty, !b.isEmpty else { return false }
+        guard a.count >= 4, b.count >= 4 else { return false }
         if a == b { return true }
+        if a.contains(b) || b.contains(a) { return true }
         let common = zip(a, b).prefix { $0 == $1 }.count
-        return common >= 8
+        return common >= 12 && Double(common) >= 0.7 * Double(min(a.count, b.count))
     }
 
     var recurringCard: RecurringCard? {
         guard usingRealData else { return nil }
         let normed = meetings.map { AppStore.normalizedTitle($0.title) }   // meetings 已按新→旧
+
+        // 首选：飞书日历交叉比对 —— 未来 7 天有日程，且会议库里有同系列的上一场
+        for ev in upcomingEvents {
+            let evNorm = AppStore.normalizedTitle(ev.summary)
+            guard let j = meetings.indices.first(where: { AppStore.sameSeries(evNorm, normed[$0]) })
+            else { continue }
+            let prev = meetings[j]
+            let items = followItems(from: prev)
+            guard !items.isEmpty else { continue }
+            return RecurringCard(title: ev.summary, prevMeta: prev.recentMeta,
+                                 items: items, upcomingLabel: ev.dateLabel)
+        }
+
+        // 兜底：库内两场同系列（严格匹配）
         for i in meetings.indices {
             guard let j = meetings.indices.first(where: { $0 > i && AppStore.sameSeries(normed[i], normed[$0]) })
             else { continue }
-            let prev = meetings[j]                                          // 同系列的上一场
-            let items = prev.dtodos.enumerated().map { idx, t in
-                let done = ctodos.contains {
-                    $0.text == t.text && $0.meeting.hasPrefix(prev.title) && $0.status == .done
-                }
-                return FollowItem(id: idx + 1, text: t.text, owner: t.owner ?? "待认领", done: done)
-            }
+            let items = followItems(from: meetings[j])
             guard !items.isEmpty else { continue }
-            return RecurringCard(title: meetings[i].title, prevMeta: prev.recentMeta, items: items)
+            return RecurringCard(title: meetings[i].title, prevMeta: meetings[j].recentMeta, items: items)
         }
         return nil
+    }
+
+    private func followItems(from prev: MeetingVM) -> [FollowItem] {
+        prev.dtodos.enumerated().map { idx, t in
+            let done = ctodos.contains {
+                $0.text == t.text && $0.meeting.hasPrefix(prev.title) && $0.status == .done
+            }
+            return FollowItem(id: idx + 1, text: t.text, owner: t.owner ?? "待认领", done: done)
+        }
     }
 
     // MARK: - 铃铛：需要你处理的事

@@ -42,6 +42,9 @@ struct FollowupScreen: View {
 
     private var subtitle: String {
         if let real {
+            if let up = real.upcomingLabel {
+                return "「\(real.title)」将于 \(up) 举行，上一场待办的完成情况已汇总。"
+            }
             return "「\(real.title)」为周期性会议，已汇总上一场待办的完成情况。"
         }
         return store.usingRealData

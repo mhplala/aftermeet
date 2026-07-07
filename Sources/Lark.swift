@@ -43,6 +43,35 @@ enum Lark {
         return openID
     }
 
+    // MARK: - 日历：未来 7 天的日程（会前追问的 ground truth）
+
+    struct UpcomingEvent { let summary: String; let dateLabel: String }
+
+    static func upcomingEvents(days: Int = 7) async -> [UpcomingEvent] {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let start = f.string(from: Date())
+        let end = f.string(from: Date().addingTimeInterval(Double(days) * 86400))
+        guard let json = await runJSON(["calendar", "+agenda", "--start", start, "--end", end], timeout: 45),
+              let items = json["data"] as? [[String: Any]] else { return [] }
+
+        let iso = ISO8601DateFormatter()
+        let out = DateFormatter(); out.locale = Locale(identifier: "zh_CN"); out.dateFormat = "M月d日 EEE HH:mm"
+        var seen = Set<String>()
+        var events: [UpcomingEvent] = []
+        for it in items {
+            guard let summary = (it["summary"] as? String)?.trimmingCharacters(in: .whitespaces),
+                  !summary.isEmpty else { continue }
+            let low = summary.lowercased()
+            if low.contains("placeholder") || low.contains("cowork") || low.contains("co-work") { continue }
+            let st = ((it["start_time"] as? [String: Any])?["datetime"] as? String).flatMap { iso.date(from: $0) }
+            guard let start = st, start > Date() else { continue }        // 只要还没开的
+            guard !seen.contains(summary) else { continue }               // 重复日程取最近一场
+            seen.insert(summary)
+            events.append(UpcomingEvent(summary: summary, dateLabel: out.string(from: start)))
+        }
+        return events
+    }
+
     // MARK: - 建任务
 
     struct CreatedTask { let guid: String; let url: String }
