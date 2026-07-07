@@ -2,10 +2,19 @@ import SwiftUI
 
 /// 日历视图 —— 前后各 7 天的飞书日程流，和会议库交叉标注：
 /// 过去的会「已有纪要」（点击进详情）/「未记录」；未来的会一键跳飞书日历。
+/// 各天区块在滚动坐标系里的 minY —— 右侧刻度用它判断「现在看到哪天」
+private struct DayOffsetKey: PreferenceKey {
+    static var defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
 struct CalendarScreen: View {
     @EnvironmentObject var store: AppStore
     private var events: [Lark.CalEvent] { store.calEvents }
     private var loading: Bool { store.calLoading && store.calEvents.isEmpty }
+    @State private var visibleDay: String = "today"
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -36,6 +45,15 @@ struct CalendarScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }
+        .coordinateSpace(name: "calScroll")
+        .onPreferenceChange(DayOffsetKey.self) { offsets in
+            // 顶部基准线之上、离得最近的那天 = 当前在看的天
+            let top: CGFloat = 140
+            if let cur = offsets.filter({ $0.value <= top }).max(by: { $0.value < $1.value })?.key
+                ?? offsets.min(by: { $0.value < $1.value })?.key {
+                if cur != visibleDay { visibleDay = cur }
+            }
+        }
         dateRail(proxy)
         }
         .onAppear {
@@ -53,37 +71,44 @@ struct CalendarScreen: View {
     private func dateRail(_ proxy: ScrollViewProxy) -> some View {
         let df = DateFormatter(); df.dateFormat = "d"
         let wf = DateFormatter(); wf.locale = Locale(identifier: "zh_CN"); wf.dateFormat = "EEEEE"  // 一字周几
-        let cal = Calendar.current
-        return ScrollView(showsIndicators: false) {
-            VStack(spacing: 3) {
-                ForEach(grouped()) { day in
-                    let date = day.events.first?.start ?? Date()
-                    Button {
-                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(day.id, anchor: .top) }
-                    } label: {
-                        VStack(spacing: 1) {
-                            Text(day.isToday ? "今" : wf.string(from: date))
-                                .font(Theme.mono(8.5)).foregroundColor(day.isToday ? .white : Theme.inkMuted)
-                            Text(day.isToday ? df.string(from: Date()) : df.string(from: date))
-                                .font(Theme.mono(12, .semibold))
-                                .foregroundColor(day.isToday ? .white : Theme.inkSecondary)
-                            Circle()
-                                .fill(day.events.isEmpty ? Color.clear : (day.isToday ? Color.white : Theme.blue500))
+        return VStack(spacing: 2) {
+            ForEach(grouped()) { day in
+                let date = day.events.first?.start ?? Date()
+                let selected = visibleDay == day.id
+                Button {
+                    visibleDay = day.id
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(day.id, anchor: .top) }
+                } label: {
+                    HStack(spacing: 6) {
+                        // 刻度线：今天蓝、其余灰，选中加长加深
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(day.isToday ? Theme.blue500 : (selected ? Theme.inkSecondary : Theme.borderDefault))
+                            .frame(width: selected ? 14 : 8, height: 2)
+                        Text(day.isToday ? "今" : df.string(from: date))
+                            .font(Theme.mono(10.5, selected ? .bold : .regular))
+                            .foregroundColor(selected ? Theme.inkPrimary
+                                             : (day.isToday ? Theme.blue700 : Theme.inkMuted))
+                            .frame(width: 20, alignment: .leading)
+                        Text(day.isToday ? "" : wf.string(from: date))
+                            .font(Theme.mono(8.5))
+                            .foregroundColor(selected ? Theme.inkTertiary : Theme.inkMuted.opacity(0.7))
+                            .frame(width: 10, alignment: .leading)
+                        if !day.events.isEmpty {
+                            Circle().fill(Theme.blue500.opacity(selected ? 1 : 0.45))
                                 .frame(width: 3.5, height: 3.5)
                         }
-                        .frame(width: 34, height: 44)
-                        .background(day.isToday ? AnyShapeStyle(Theme.inkGrad) : AnyShapeStyle(Color.clear))
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.plain)
+                    .frame(height: 26)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .animation(.easeOut(duration: 0.15), value: selected)
             }
-            .padding(.vertical, 8)
         }
-        .frame(width: 50)
-        .padding(.top, 96)
-        .padding(.trailing, 12)
+        .frame(width: 74)
+        .frame(maxHeight: .infinity, alignment: .center)
+        .padding(.trailing, 14)
     }
 
     private var header: some View {
@@ -171,6 +196,10 @@ struct CalendarScreen: View {
                 }
             }
             .id(day.id)
+            .background(GeometryReader { geo in
+                Color.clear.preference(key: DayOffsetKey.self,
+                                       value: [day.id: geo.frame(in: .named("calScroll")).minY])
+            })
         }
     }
 
