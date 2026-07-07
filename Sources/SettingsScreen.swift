@@ -171,6 +171,19 @@ struct SettingsScreen: View {
                             }
                         }
                         Spacer()
+                        if downloader.errors[d.file] != nil {
+                            Button {
+                                if let url = URL(string: "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/\(d.file)") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            } label: {
+                                Text("浏览器下载").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                                    .padding(.horizontal, 11).padding(.vertical, 5)
+                                    .background(Color.white).clipShape(Capsule())
+                                    .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                                    .contentShape(Capsule())
+                            }.buttonStyle(.plain)
+                        }
                         if let p = downloader.progress[d.file] {
                             ProgressView(value: p).frame(width: 90)
                             Text("\(Int(p * 100))%").font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
@@ -193,9 +206,8 @@ struct SettingsScreen: View {
             }
 
             row {
-                Text("下载源 hf-mirror.com；公司内网可能拦截，失败时请手动下载后放入模型目录。")
+                Text("手动下载的模型放入模型目录后自动识别")
                     .font(Theme.mono(10)).foregroundColor(Theme.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button { NSWorkspace.shared.activateFileViewerSelecting([ModelDownloader.dir]) } label: {
                     Text("打开模型目录").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
