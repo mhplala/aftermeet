@@ -50,12 +50,13 @@ enum Lark {
     struct UpcomingEvent { let summary: String; let dateLabel: String; let start: Date }
 
     /// 一段时间内的日程（过滤 placeholder / cowork / 全天占位）。
-    static func events(from: Date, to: Date) async -> [CalEvent] {
+    /// 返回 nil = 查询本身失败（CLI 挂了/超时）—— 调用方据此保留重试机会，别当成"没日程"。
+    static func events(from: Date, to: Date) async -> [CalEvent]? {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
         guard let json = await runJSON(["calendar", "+agenda",
                                         "--start", f.string(from: from),
                                         "--end", f.string(from: to)], timeout: 45),
-              let items = json["data"] as? [[String: Any]] else { return [] }
+              let items = json["data"] as? [[String: Any]] else { return nil }
         let iso = ISO8601DateFormatter()
         return items.compactMap { it in
             guard let summary = (it["summary"] as? String)?.trimmingCharacters(in: .whitespaces),
@@ -74,7 +75,7 @@ enum Lark {
         let out = DateFormatter(); out.locale = Locale(identifier: "zh_CN"); out.dateFormat = "M月d日 EEE HH:mm"
         var seen = Set<String>()
         var upcoming: [UpcomingEvent] = []
-        for ev in await events(from: Date(), to: Date().addingTimeInterval(Double(days) * 86400)) {
+        for ev in await events(from: Date(), to: Date().addingTimeInterval(Double(days) * 86400)) ?? [] {
             guard ev.start > Date(), !seen.contains(ev.summary) else { continue }
             seen.insert(ev.summary)
             upcoming.append(UpcomingEvent(summary: ev.summary, dateLabel: out.string(from: ev.start), start: ev.start))
@@ -84,10 +85,11 @@ enum Lark {
 
     /// 时间戳猜会议：录音区间 [start, start+dur] 和日历日程求重叠，
     /// 重叠 ≥5 分钟（或录音一半以上）才算，按重叠时长降序返回全部候选。
-    static func eventsOverlapping(start recStart: Date, durationSec: Int) async -> [CalEvent] {
+    /// nil = 日历查询失败（和"该时段没会"是两回事，调用方应保留重试）。
+    static func eventsOverlapping(start recStart: Date, durationSec: Int) async -> [CalEvent]? {
         let recEnd = recStart.addingTimeInterval(Double(max(durationSec, 60)))
-        let dayEvents = await events(from: recStart.addingTimeInterval(-86400),
-                                     to: recEnd.addingTimeInterval(86400))
+        guard let dayEvents = await events(from: recStart.addingTimeInterval(-86400),
+                                           to: recEnd.addingTimeInterval(86400)) else { return nil }
         let minOverlap = min(300.0, Double(durationSec) * 0.5)
         return dayEvents
             .map { ($0, min($0.end, recEnd).timeIntervalSince(max($0.start, recStart))) }
@@ -177,6 +179,7 @@ enum Lark {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: cli)
             p.arguments = args + ["--format", "json"]
+            p.environment = ToolPath.childEnvironment   // Dock 启动的 PATH 缺 brew，node shebang 会秒退
             let out = Pipe()
             p.standardOutput = out
             p.standardError = FileHandle.nullDevice     // 没人读的 stderr 管道满了会憋死进程

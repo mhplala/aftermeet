@@ -8,6 +8,20 @@ enum ToolPath {
     nonisolated(unsafe) private static var cache: [String: String?] = [:]
     private static let lock = NSLock()
 
+    /// GUI app 从 Dock 启动时 PATH 只有 /usr/bin:/bin —— shebang 为 `#!/usr/bin/env node`
+    /// 的 CLI（npm 装的 lark-cli）会因找不到 node 秒退且无输出。
+    /// 所有子进程统一带上补全的 PATH，终端里能跑的命令 app 里也要能跑。
+    static let childEnvironment: [String: String] = {
+        var env = ProcessInfo.processInfo.environment
+        let cur = env["PATH"] ?? "/usr/bin:/bin"
+        let present = Set(cur.split(separator: ":").map(String.init))
+        let extra = ["/opt/homebrew/bin", "/usr/local/bin",
+                     NSHomeDirectory() + "/.local/bin",
+                     NSHomeDirectory() + "/bin"].filter { !present.contains($0) }
+        env["PATH"] = (extra + [cur]).joined(separator: ":")
+        return env
+    }()
+
     static func resolve(_ name: String) -> String? {
         lock.lock()
         if let hit = cache[name] { lock.unlock(); return hit }

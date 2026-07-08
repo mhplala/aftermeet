@@ -566,7 +566,10 @@ final class AppStore: ObservableObject {
             let dur = liveDurations[m.id] ?? 600
             // 存的时间戳是停录时刻 → 录音区间是 [ts - 时长, ts]
             let recStart = Date(timeIntervalSince1970: ts - Double(dur))
-            let candidates = await Lark.eventsOverlapping(start: recStart, durationSec: dur)
+            guard let candidates = await Lark.eventsOverlapping(start: recStart, durationSec: dur) else {
+                calendarChecked.remove(m.id)   // 查询失败 ≠ 没会：下次打开再试
+                return
+            }
             guard let ev = candidates.first else { return }
             let evNorm = AppStore.normalizedTitle(ev.summary)
             let curNorm = AppStore.normalizedTitle(m.title)
@@ -805,7 +808,7 @@ final class AppStore: ObservableObject {
         Task {
             let events = await Lark.events(from: Date().addingTimeInterval(-7 * 86400),
                                            to: Date().addingTimeInterval(7 * 86400))
-            if !events.isEmpty || force {
+            if let events, !events.isEmpty || force {   // 查询失败（nil）不覆盖缓存
                 calEvents = events
                 CalCache.save(events)
             }
