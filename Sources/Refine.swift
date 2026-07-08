@@ -146,10 +146,16 @@ enum Refine {
 
     /// One HTTP round-trip → the model's cleaned text (markdown fences stripped). Throws on no response.
     private static func callDoubao(system: String, user: String) throws -> String {
+        try chatOnce(system: system, user: user, maxTokens: 4000)
+    }
+
+    /// 唯一 LLM 出口：内置服务（设备额度）或 BYOK（用户自己的 OpenAI 兼容端点）。
+    static func chatOnce(system: String, user: String, maxTokens: Int) throws -> String {
+        let byok = AIBackend.isBYOK
         let payload: [String: Any] = [
-            "model": model,
+            "model": byok ? AIBackend.model : model,
             "temperature": 0.2,
-            "max_tokens": 4000,
+            "max_tokens": maxTokens,
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],
@@ -159,15 +165,26 @@ enum Refine {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        proc.arguments = [
-            "-sk", "--max-time", "180",
-            "https://\(ip)/v1/chat/completions",
-            "-H", "Host: \(host)",
-            "-H", "Authorization: Bearer \(SikuCloud.deviceToken)",
-            "-H", "X-Siku-App: \(SikuCloud.appSecret)",
-            "-H", "Content-Type: application/json",
-            "--data-binary", "@-",
-        ]
+        if byok {
+            // 标准 TLS，不做证书豁免；Key 来自钥匙串
+            proc.arguments = [
+                "-s", "--max-time", "180",
+                AIBackend.chatURL,
+                "-H", "Authorization: Bearer \(AIBackend.apiKey ?? "")",
+                "-H", "Content-Type: application/json",
+                "--data-binary", "@-",
+            ]
+        } else {
+            proc.arguments = [
+                "-sk", "--max-time", "180",
+                "https://\(ip)/v1/chat/completions",
+                "-H", "Host: \(host)",
+                "-H", "Authorization: Bearer \(SikuCloud.deviceToken)",
+                "-H", "X-Siku-App: \(SikuCloud.appSecret)",
+                "-H", "Content-Type: application/json",
+                "--data-binary", "@-",
+            ]
+        }
         let stdin = Pipe(), stdout = Pipe()
         proc.standardInput = stdin
         proc.standardOutput = stdout
@@ -180,11 +197,16 @@ enum Refine {
         let out = stdout.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
 
-        guard let resp = try? JSONSerialization.jsonObject(with: out) as? [String: Any],
-              let choices = resp["choices"] as? [[String: Any]],
+        guard let resp = try? JSONSerialization.jsonObject(with: out) as? [String: Any] else {
+            throw err(AIBackend.isBYOK ? "API 无响应（检查 Base URL 与网络）" : "提炼服务无响应（检查网络）")
+        }
+        if let apiErr = resp["error"] as? [String: Any], let m = apiErr["message"] as? String {
+            throw err("API 错误：\(String(m.prefix(120)))")
+        }
+        guard let choices = resp["choices"] as? [[String: Any]],
               let msg = choices.first?["message"] as? [String: Any],
               let content = msg["content"] as? String
-        else { throw err("提炼服务无响应（检查网络 / SNI 绕过）") }
+        else { throw err("响应格式异常") }
 
         return content
             .replacingOccurrences(of: "```json", with: "")

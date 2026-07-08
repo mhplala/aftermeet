@@ -112,6 +112,13 @@ struct SettingsScreen: View {
     @State private var usage: String = ""
     @State private var usageLoading = false
 
+    // BYOK 表单状态
+    @State private var aiMode = UserDefaults.standard.string(forKey: AIBackend.modeKey) ?? "builtin"
+    @State private var byokURL = UserDefaults.standard.string(forKey: AIBackend.urlKey) ?? ""
+    @State private var byokModel = UserDefaults.standard.string(forKey: AIBackend.modelKey) ?? ""
+    @State private var byokKey = AIBackend.apiKey ?? ""
+    @State private var testingAI = false
+
     /// 可下载的常用模型（多语种，中文可用；q5 为量化版，体积小速度快）
     private let downloadable: [(file: String, label: String, size: String)] = [
         ("ggml-small.bin",             "Small · 快，精度一般",        "466 MB"),
@@ -311,18 +318,91 @@ struct SettingsScreen: View {
         }
     }
 
-    // MARK: AI 服务
+    // MARK: AI 服务（内置 / BYOK）
 
     private var aiSection: some View {
         VStack(spacing: 0) {
             row {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Siku 云（纪要提炼 / 问答）").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
-                    Text("设备标识 " + String(SikuCloud.deviceToken.suffix(12)))
-                        .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
-                }
+                Text("服务来源").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
                 Spacer()
-                Text(usage.isEmpty ? "…" : usage).font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
+                Picker("", selection: $aiMode) {
+                    Text("内置").tag("builtin")
+                    Text("自定义 API").tag("byok")
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                .onChange(of: aiMode) { _, v in
+                    UserDefaults.standard.set(v, forKey: AIBackend.modeKey)
+                }
+            }
+            Hairline()
+            if aiMode == "byok" {
+                byokForm
+            } else {
+                row {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("内置服务（纪要提炼 / 问答）").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
+                        Text("按设备限额 · 标识 " + String(SikuCloud.deviceToken.suffix(12)))
+                            .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                    }
+                    Spacer()
+                    Text(usage.isEmpty ? "…" : usage).font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
+                }
+            }
+        }
+    }
+
+    private var byokForm: some View {
+        VStack(spacing: 0) {
+            row {
+                Text("Base URL").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
+                TextField("https://api.openai.com/v1", text: $byokURL)
+                    .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
+                    .autocorrectionDisabled()
+                    .onChange(of: byokURL) { _, v in UserDefaults.standard.set(v, forKey: AIBackend.urlKey) }
+            }
+            Hairline()
+            row {
+                Text("模型").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
+                TextField("gpt-4o-mini / deepseek-chat / …", text: $byokModel)
+                    .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
+                    .autocorrectionDisabled()
+                    .onChange(of: byokModel) { _, v in UserDefaults.standard.set(v, forKey: AIBackend.modelKey) }
+            }
+            Hairline()
+            row {
+                Text("API Key").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
+                SecureField("sk-…", text: $byokKey)
+                    .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
+                    .onChange(of: byokKey) { _, v in AIBackend.setAPIKey(v) }
+                Spacer()
+                Text("存于系统钥匙串").font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+            }
+            Hairline()
+            row {
+                Text("兼容任意 OpenAI 格式端点（OpenAI / DeepSeek / Moonshot / 方舟…）")
+                    .font(Theme.mono(10)).foregroundColor(Theme.inkMuted)
+                Spacer()
+                Button {
+                    guard !testingAI else { return }
+                    testingAI = true
+                    Task {
+                        let error = await AIBackend.test()
+                        testingAI = false
+                        store.showToast(error.map { "连接失败：\($0)" } ?? "连接正常")
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        if testingAI { ProgressView().controlSize(.mini) }
+                        Text("测试连接").font(Theme.ui(11.5, .semibold))
+                    }
+                    .foregroundColor(Theme.inkSecondary)
+                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .background(Color.white).clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(testingAI || !AIBackend.isBYOK)
             }
         }
     }
