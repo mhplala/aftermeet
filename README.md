@@ -1,58 +1,82 @@
-# 会后秘书 AfterMeet — macOS app
+<p align="center">
+  <img src="docs/icon.png" width="112" alt="Aftermeet icon">
+</p>
 
-macOS 原生会后秘书：会中本地实时转写（音频不出网）→ AI 生成式纪要 → 待办一键落成飞书任务 →
-会前自动追问上次进度。SwiftUI + SQLite/FTS5，Cal.com 式中性视觉。MIT License。
+<h1 align="center">Aftermeet</h1>
 
-## 跑起来
+<p align="center">开完会，事情自动往前走。</p>
+<p align="center">本地实时转写 · AI 生成式纪要 · 待办落成飞书任务 · 会前自动追问</p>
+
+<p align="center">
+  <a href="https://github.com/mhplala/aftermeet/releases/latest"><img src="https://img.shields.io/github/v/release/mhplala/aftermeet?label=Release&color=3b82f6" alt="Release"></a>
+  <a href="https://github.com/mhplala/aftermeet/releases"><img src="https://img.shields.io/github/downloads/mhplala/aftermeet/total?label=Downloads&color=111111" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-111111" alt="macOS 14+">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/mhplala/aftermeet?color=16a34a" alt="MIT"></a>
+</p>
+
+## 它做什么
+
+会议软件负责开会，Aftermeet 负责会后的一切：
+
+- **会中本地实时转写**——ScreenCaptureKit 采集系统音频与麦克风，whisper.cpp 端上推理。音频不出网，逐字稿边转边落盘，崩溃最多丢几秒
+- **AI 生成式纪要**——模型按每场会的内容自选积木排版：摘要、关键数字、方向转变、深度要点、决策、分歧、时间线、原话、下次议题
+- **待办一键落成飞书任务**——确认即建卡、通知负责人；姓名只做精确唯一匹配，宁可待认领不派错人
+- **飞书日历交叉比对**——按录音时间戳自动命名会议；日历里同主题会议再次出现时，自动生成上次待办的进度追问卡
+- **全文检索**——SQLite FTS5 索引标题、摘要与逐字稿，⌘K 直达
+- **每日综述与周报**——按天汇总所有会议；周报台账一键复制 Markdown
+- **纪要问答**——只依据这场会的逐字稿回答，没提到就明说，不编造
+
+## 下载
+
+从 [Releases](https://github.com/mhplala/aftermeet/releases/latest) 下载 DMG，拖入「应用程序」即可。已通过 Apple 公证。
+
+首次录制会请求两项系统权限：屏幕录制（采集系统音频）与麦克风（收录你的发言）。
+
+## 依赖
+
+| 依赖 | 用途 | 安装 |
+|---|---|---|
+| [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | 本地转写引擎（必需） | `brew install whisper-cpp` |
+| 转写模型 | ggml 格式，应用内可下载 | 设置 → 转写模型（推荐 Medium Q5） |
+| [lark-cli](https://github.com/larksuite) | 飞书链路：任务 / 日历 / 同步（可选） | 装好并登录后自动接入 |
+
+不装 lark-cli 也能用：本地转写、纪要、待办、检索全部可用，只是没有飞书侧的任务回写与日历比对。
+
+## 工作原理
+
+```
+会议软件（任意）
+    │  系统音频 + 麦克风（ScreenCaptureKit，本机采集）
+    ▼
+whisper.cpp 常驻推理（端上，音频不出网）
+    │  逐字稿实时落盘
+    ▼
+LLM 生成式提炼 ──► 纪要积木 + 待办（低置信度 → 待认领）
+    │                        │
+    ▼                        ▼
+SQLite + FTS5           飞书任务 / 群转发（lark-cli，用户身份）
+    ▲
+    └── 飞书日历 / 妙记纪要 定时同步、时间戳交叉比对
+```
+
+## 隐私
+
+- 会议音频与逐字稿只在本机处理和存储，不上传
+- 纪要提炼与问答将**文本**发送至内置的 AI 服务（按设备限额）；逐字稿原文之外不携带任何账号信息
+- 飞书操作全部通过本机 lark-cli 以你的身份执行，应用不保存任何凭证
+- 录制对其他参会者不可见，是否告知由你决定——请遵守所在地法律与公司规定
+
+## 从源码构建
 
 ```bash
-./build.sh                      # xcodegen generate + xcodebuild
+brew install xcodegen whisper-cpp
+git clone https://github.com/mhplala/aftermeet.git && cd aftermeet
+./build.sh
 open .build/Build/Products/Debug/AfterMeet.app
 ```
 
-要求：Xcode 26 / Swift 6.x（语言模式按 Swift 5 编译）、macOS 14+。
+要求 Xcode 26 / macOS 14+（麦克风采集需 macOS 15+）。`./release.sh <version>` 产出签名公证的 DMG（需自备 Developer ID）。
 
-## 结构（目录 6 项 + 常驻录制条）
+## License
 
-| 入口 | 文件 | 说明 |
-|---|---|---|
-| 录制条（顶栏常驻） | `RecStrip.swift` | 五态：空闲/检测到会议/录制中/整理中/✓完成（点击才跳详情，不抢页面）；面板含起名、日程建议、实时转写 |
-| 概览 | `HomeScreen.swift` | 动态问候（真名 via lark-cli）、指标卡、近期 5 场、今天该跟的、追问横幅（真实 recurringCard） |
-| 会议库 | `LibraryScreen.swift` | 所有会议按天分组；tab：纪要 / 原始转写（原转写历史併入） |
-| 会议纪要（详情） | `DetailScreen.swift` | 生成式积木 report + 待办确认 + 问答；返回（⌘[）+ ‹› 前后切换（到头禁用） |
-| 待办中心 | `TodosScreen.swift` | 跨会议任务、筛选、逾期真实计算（due 过期→逾期） |
-| 会前追问 | `FollowupScreen.swift` | 同名会议重复出现 → 上一场待办对比卡，可发群 |
-| 每日综述 / 周报 | `DailyScreen/WeeklyScreen` | 按天 digest；周报台账一键复制 Markdown |
-
-导航带历史栈（`AppStore.go/goBack`），面包屑只表达归属，返回永远回来路。
-
-- `Theme.swift` — 新 token（冷墨 #1b1d2a / 闭环绿 #0f9d63 / 玻璃渐变）+ `AmbientBackground` 光晕
-- `Models.swift` — `AppStore`：数据、导航栈、录制态、搜索、通知
-- `NoteBlocks.swift` — 生成式纪要渲染器（summary/stats/beforeAfter/keyPoints/decisions/disputes/timeline/quote/nextAgenda）
-- `Lark.swift` — lark-cli 桥：建任务/搜人/搜群/发消息（用户身份，app 不落凭证）
-- `FeishuSync.swift` — 会后自动同步：15 分钟轮询 vc +search → notes → docs +fetch → 豆包提炼 → meetings.json
-- 设计禁用：斜体、左侧 accent 竖条、蓝紫渐变
-
-## 真实链路（已接）
-
-- **待办确认/认领 → 真建飞书任务**（`task +create`，姓名精确唯一匹配才指派；task-links.json 防重复建卡）
-- **转发到群 / 追问卡发群**：`im +chat-search` 选群 → `im +messages-send --markdown`。**缺 scope**：需一次
-  `lark-cli auth login --scope "im:message.send_as_user im:message"`（app 内会提示）
-- **飞书同步**：自动轮询 + 侧栏「立即同步」；事件推送 `vc.note.generated_v1` 需在开放平台控制台订阅后才可替代轮询
-- **Siku 云**：设备 token（`siku-dev-<uuid>` + X-Siku-App）自动登记，每日 500 万 token 免费额度，用户零配置
-- 本地转写链路不变：截系统音频 → Whisper 端上转写 → 豆包生成式提炼（音频不出网）
-
-## 数据真实性原则
-
-有真数据（meetings.json / live-meetings.json 非空）时全部真数据驱动；样例（周三产品评审会）只做零数据演示兜底，
-且演示模式下确认待办不建真实任务（toast 注明）。跨周趋势攒够历史才出图，不编造。
-
-## 调试
-
-`open AfterMeet.app --args -screen library`（library/detail/todos/followup/weekly/daily，`-onboarding YES`）
-
-## 已知边界
-
-- im 发送 scope 未授权前，「转发到群」走复制兜底
-- 周报趋势图 / 拖延 Top 5 需跨周历史（真数据模式显示诚实空态）
-- `sync.sh` 保留作为手动补历史的后备管线（app 内轮询已覆盖日常）
+[MIT](LICENSE) © Stev Wang

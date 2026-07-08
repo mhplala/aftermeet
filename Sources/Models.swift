@@ -266,9 +266,12 @@ final class AppStore: ObservableObject {
     private var flashWork: DispatchWorkItem?
     private var syncForward: AnyCancellable?
 
+    /// `-demo YES`：跳过真实数据与飞书链路，只走内置示例（公开截图/演示用）
+    static let demoMode = UserDefaults.standard.bool(forKey: "demo")
+
     init() {
-        let reals = RealData.load().map { MeetingVM(real: $0) }
-        let stored = LiveStore.load()
+        let reals = Self.demoMode ? [] : RealData.load().map { MeetingVM(real: $0) }
+        let stored = Self.demoMode ? [] : LiveStore.load()
         liveDurations = Dictionary(uniqueKeysWithValues: stored.map { ($0.id, $0.durationSec) })
         let live = stored
             .sorted { $0.timestamp > $1.timestamp }                       // newest first
@@ -294,14 +297,18 @@ final class AppStore: ObservableObject {
         }
         if UserDefaults.standard.bool(forKey: "onboarding") { showOnboarding = true }
 
-        Task { if let me = await Lark.me() { self.userName = me.name } }
+        if !Self.demoMode {
+            Task { if let me = await Lark.me() { self.userName = me.name } }
+        }
         sync.onNewMeetings = { [weak self] fresh in self?.mergeSynced(fresh) }
         // FeishuSync 是嵌套 ObservableObject，把它的变化转发出去，侧栏状态卡才会刷新
         syncForward = sync.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-        sync.start()
-        buildArchiveIndex()      // 转写档案全文进搜索
-        calEvents = CalCache.load()   // 上次的日历先顶上（秒开），随后后台刷新
-        loadCalendar()
+        if !Self.demoMode {
+            sync.start()
+            buildArchiveIndex()      // 转写档案全文进搜索
+            calEvents = CalCache.load()   // 上次的日历先顶上（秒开），随后后台刷新
+            loadCalendar()
+        }
         refreshDerived()
     }
 
