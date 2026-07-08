@@ -37,7 +37,7 @@ enum LarkCalendar {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: args[0])
         p.arguments = Array(args.dropFirst())
-        p.environment = ToolPath.childEnvironment   // node shebang 需要 brew PATH
+        p.environment = ToolPath.environment(for: args[0])   // CLI 同目录前置进 PATH
         let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let d = out.fileHandleForReading.readDataToEndOfFile()

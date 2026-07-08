@@ -179,7 +179,7 @@ enum Lark {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: cli)
             p.arguments = args + ["--format", "json"]
-            p.environment = ToolPath.childEnvironment   // Dock 启动的 PATH 缺 brew，node shebang 会秒退
+            p.environment = ToolPath.environment(for: cli)   // CLI 同目录前置进 PATH，node shebang 才找得到
             let out = Pipe()
             p.standardOutput = out
             p.standardError = FileHandle.nullDevice     // 没人读的 stderr 管道满了会憋死进程
