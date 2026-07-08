@@ -38,6 +38,17 @@ struct TopBar: View {
                 if !searchFocused { NSApp.keyWindow?.makeFirstResponder(nil) }
             }
         }
+        // 窗口每次重新成为 key，AppKit 都会把焦点还给唯一的文本框；焦点在文本框上时，
+        // 用户的第一次点击会被用来收回焦点（事件被吞）→ "会议要点两次才打开"。
+        // 只要不是用户主动聚焦（⌘K/点击搜索框），激活后就立刻清掉第一响应者。
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard let w = note.object as? NSWindow, w.frame.width > 500 else { return }   // 忽略弹窗小窗
+            DispatchQueue.main.async {
+                if !searchFocused, w.firstResponder is NSTextView {
+                    w.makeFirstResponder(nil)
+                }
+            }
+        }
     }
 
     // MARK: search — 会议标题/摘要/逐字稿 + 待办/负责人 全文匹配

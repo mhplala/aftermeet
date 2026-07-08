@@ -177,6 +177,7 @@ struct LibraryScreen: View {
     private func openMeeting(_ m: MeetingVM) {
         if let idx = store.meetings.firstIndex(where: { $0.id == m.id }) {
             store.selectMeeting(idx)
+        } else {
         }
     }
 }
