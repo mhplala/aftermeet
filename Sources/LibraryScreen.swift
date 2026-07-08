@@ -17,7 +17,9 @@ struct LibraryScreen: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            // 注意：这里必须是普通 VStack —— 内层（转写全文）是 LazyVStack，
+            // Lazy 嵌套 Lazy 会退化成全量 measureEstimates，几千段落直接卡死主线程。
+            VStack(alignment: .leading, spacing: 0) {
                 header
                 tabs.padding(.top, 18).padding(.bottom, 6)
                 if store.libraryRawTab {
@@ -351,8 +353,17 @@ struct TranscriptArchiveView: View {
             let title = g.count > 1
                 ? "\(name) · \(dayPart) \(span)（\(g.count) 段合并）"
                 : "\(name) · \(g.first!.dateStr)"
-            let paras = body.components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            // 段落合并成 ~300 字块：既保留懒加载粒度，又把子视图数压低一个量级
+            var paras: [String] = []
+            var cur = ""
+            for line in body.components(separatedBy: "\n") {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                guard !t.isEmpty else { continue }
+                if cur.isEmpty { cur = t }
+                else if cur.count + t.count < 300 { cur += "\n" + t }
+                else { paras.append(cur); cur = t }
+            }
+            if !cur.isEmpty { paras.append(cur) }
             return TranscriptFile(url: g.first!.url, title: title, chars: body.count,
                                   preview: String(body.replacingOccurrences(of: "\n", with: " ").prefix(90)),
                                   body: body, paragraphs: paras)
