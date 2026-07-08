@@ -4,8 +4,8 @@ import AppKit
 /// 飞书侧的真实写入/查询 —— 全部经 lark-cli（用户身份），app 里不落任何凭证。
 /// 所有调用都是 best-effort：CLI 不在、scope 不够都走 LarkError，由调用方给用户诚实反馈。
 enum Lark {
-    static let cli = "/opt/homebrew/bin/lark-cli"
-    static var available: Bool { FileManager.default.isExecutableFile(atPath: cli) }
+    static var cli: String { ToolPath.resolve("lark-cli") ?? "/opt/homebrew/bin/lark-cli" }
+    static var available: Bool { ToolPath.resolve("lark-cli") != nil }
 
     struct LarkError: Error, LocalizedError {
         let message: String

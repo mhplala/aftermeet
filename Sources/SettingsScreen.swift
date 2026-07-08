@@ -8,6 +8,13 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
     @Published var errors: [String: String] = [:]
     private var names: [Int: String] = [:]               // taskIdentifier → 文件名
 
+    /// 下载源按序回退：镜像失败自动换官方源，全挂才报错
+    static let sources = [
+        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/",
+    ]
+    private var sourceIndex: [String: Int] = [:]         // 文件名 → 当前用第几个源
+
     static var dir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AfterMeet/models")
@@ -19,12 +26,27 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
 
     func download(_ file: String) {
         guard progress[file] == nil else { return }
-        guard let url = URL(string: "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/\(file)") else { return }
+        sourceIndex[file] = 0
+        startAttempt(file)
+    }
+
+    private func startAttempt(_ file: String) {
+        let idx = sourceIndex[file] ?? 0
+        guard idx < Self.sources.count, let url = URL(string: Self.sources[idx] + file) else { return }
         errors[file] = nil
         progress[file] = 0
         let task = session.downloadTask(with: url)
         names[task.taskIdentifier] = file
         task.resume()
+    }
+
+    /// 当前源失败 → 还有下一个源就静默换源重试；true = 已换源，不用报错
+    private func advanceSource(_ file: String) -> Bool {
+        let next = (sourceIndex[file] ?? 0) + 1
+        guard next < Self.sources.count else { return false }
+        sourceIndex[file] = next
+        startAttempt(file)
+        return true
     }
 
     // delegate（非主线程）→ 回主线程发布
@@ -48,9 +70,10 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
             guard let f = self.names[id] else { return }
             defer { self.names[id] = nil }
             guard code == 200 else {
-                self.progress[f] = nil
-                self.errors[f] = "下载失败（HTTP \(code)）"
                 try? FileManager.default.removeItem(at: tmp)
+                if self.advanceSource(f) { return }        // 换下一个源重试
+                self.progress[f] = nil
+                self.errors[f] = "下载失败（HTTP \(code)，已尝试全部下载源）"
                 return
             }
             let dest = Self.dir.appendingPathComponent(f)
@@ -70,9 +93,10 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
         let id = task.taskIdentifier
         Task { @MainActor in
             if let f = self.names[id] {
+                self.names[id] = nil
+                if self.advanceSource(f) { return }        // 换下一个源重试
                 self.progress[f] = nil
                 self.errors[f] = "网络错误：\(error.localizedDescription)"
-                self.names[id] = nil
             }
         }
     }
@@ -104,6 +128,7 @@ struct SettingsScreen: View {
                     .foregroundColor(Theme.inkPrimary)
                     .padding(.bottom, 20)
 
+                section("转写引擎") { engineSection }
                 section("转写模型") { modelSection }
                 section("录制") { recordSection }
                 section("飞书") { larkSection }
@@ -125,6 +150,20 @@ struct SettingsScreen: View {
             Card(padding: 0) { content() }
         }
         .padding(.bottom, 22)
+    }
+
+    // MARK: 转写引擎
+
+    private var engineSection: some View {
+        VStack(spacing: 0) {
+            statusRow("whisper-cli", ok: Whisper.cliAvailable,
+                      okText: Whisper.cliAvailable ? Whisper.cli : "已安装",
+                      failText: "未找到（brew install whisper-cpp）")
+            Hairline()
+            statusRow("whisper-server", ok: ToolPath.resolve("whisper-server") != nil,
+                      okText: ToolPath.resolve("whisper-server") ?? "已安装",
+                      failText: "未找到（随 whisper-cpp 一起安装）")
+        }
     }
 
     // MARK: 转写模型
@@ -249,7 +288,8 @@ struct SettingsScreen: View {
     private var larkSection: some View {
         VStack(spacing: 0) {
             statusRow("lark-cli", ok: Lark.available,
-                      okText: "已安装", failText: "未找到（brew install 后重启 app）")
+                      okText: Lark.available ? Lark.cli : "已安装",
+                      failText: "未找到（支持 /opt/homebrew、/usr/local、npm 全局等安装方式）")
             Hairline()
             row {
                 VStack(alignment: .leading, spacing: 2) {

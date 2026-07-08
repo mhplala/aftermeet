@@ -5,7 +5,7 @@ import Darwin   // kill / SIGKILL
 /// and transcribes audio windows over HTTP. Resident model → ~0.1s/window, fast enough
 /// to re-transcribe a growing window every ~1.5s for a live, streaming feel.
 final class WhisperServer {
-    private let exe = "/opt/homebrew/bin/whisper-server"
+    private var exe: String { ToolPath.resolve("whisper-server") ?? "/opt/homebrew/bin/whisper-server" }
     private let port: Int
     private var proc: Process?
 

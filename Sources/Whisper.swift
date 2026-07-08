@@ -3,7 +3,8 @@ import Foundation
 /// Local whisper.cpp transcription via the user's Homebrew `whisper-cli` + ggml model.
 /// Shelled out with full paths (the GUI app's PATH lacks /opt/homebrew/bin), same as Refine's curl.
 enum Whisper {
-    static let cli = "/opt/homebrew/bin/whisper-cli"
+    static var cli: String { ToolPath.resolve("whisper-cli") ?? "/opt/homebrew/bin/whisper-cli" }
+    static var cliAvailable: Bool { ToolPath.resolve("whisper-cli") != nil }
     // ggml-medium-q5_0 (multilingual, quantized) — better zh accuracy, fast enough resident.
     // Override via UserDefaults "whisperModel".
     static var model: String {

@@ -4,10 +4,10 @@ import Foundation
 /// Returns a *discrete* current meeting's name — skips all-day / cowork / placeholder blocks,
 /// which is what the user's calendar mostly holds, so this is an auto-suggest, not the source of truth.
 enum LarkCalendar {
-    static let cli = "/opt/homebrew/bin/lark-cli"
+    static var cli: String { Lark.cli }
 
     static func currentMeetingName() -> String? {
-        guard FileManager.default.isExecutableFile(atPath: cli),
+        guard Lark.available,
               let data = run([cli, "calendar", "+agenda", "--format", "json"]),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = json["data"] as? [[String: Any]] else { return nil }
