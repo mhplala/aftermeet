@@ -9,6 +9,9 @@ IDENTITY="9E96E6F329CAC93BD47EBD01100ABD51C32A4D1B"
 APP_NAME="Aftermeet"
 DIST="dist"
 
+echo "▸ 内置转写引擎"
+./scripts/vendor-whisper.sh
+
 echo "▸ xcodegen + Release 构建"
 xcodegen generate
 xcodebuild \
@@ -26,7 +29,12 @@ APP_SRC="$(find .build/Build/Products/Release -maxdepth 1 -name '*.app' | head -
 rm -rf "$DIST"; mkdir -p "$DIST"
 cp -R "$APP_SRC" "$DIST/$APP_NAME.app"
 
-echo "▸ codesign（硬化运行时 + 麦克风 entitlement）"
+echo "▸ codesign（先签内置引擎，再签 app）"
+if [ -f "$DIST/$APP_NAME.app/Contents/MacOS/whisper-server" ]; then
+  codesign --force --options runtime --timestamp \
+    --sign "$IDENTITY" \
+    "$DIST/$APP_NAME.app/Contents/MacOS/whisper-server"
+fi
 codesign --force --options runtime --timestamp \
   --entitlements Aftermeet.entitlements \
   --sign "$IDENTITY" \

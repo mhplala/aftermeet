@@ -182,9 +182,9 @@ struct RecPanel: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 12)).foregroundColor(Theme.warn500)
             VStack(alignment: .leading, spacing: 1) {
-                Text(Whisper.cliAvailable ? "缺少转写模型" : "未安装转写引擎")
+                Text(Whisper.serverAvailable ? "缺少转写模型" : "转写引擎异常")
                     .font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkPrimary)
-                Text(Whisper.cliAvailable ? "下载模型后即可录制" : "brew install whisper-cpp，并下载模型")
+                Text(Whisper.serverAvailable ? "下载模型后即可录制" : "重新安装应用，或 brew install whisper-cpp")
                     .font(Theme.mono(9.5)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()

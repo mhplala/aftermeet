@@ -155,14 +155,12 @@ struct SettingsScreen: View {
     // MARK: 转写引擎
 
     private var engineSection: some View {
-        VStack(spacing: 0) {
-            statusRow("whisper-cli", ok: Whisper.cliAvailable,
-                      okText: Whisper.cliAvailable ? Whisper.cli : "已安装",
-                      failText: "未找到（brew install whisper-cpp）")
-            Hairline()
-            statusRow("whisper-server", ok: ToolPath.resolve("whisper-server") != nil,
-                      okText: ToolPath.resolve("whisper-server") ?? "已安装",
-                      failText: "未找到（随 whisper-cpp 一起安装）")
+        let server = ToolPath.resolve("whisper-server")
+        let bundled = server?.hasPrefix(Bundle.main.bundlePath) == true
+        return VStack(spacing: 0) {
+            statusRow("whisper-server", ok: server != nil,
+                      okText: bundled ? "内置" : (server ?? "已安装"),
+                      failText: "未找到（重新安装应用，或 brew install whisper-cpp）")
         }
     }
 

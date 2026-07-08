@@ -5,6 +5,8 @@ import Foundation
 enum Whisper {
     static var cli: String { ToolPath.resolve("whisper-cli") ?? "/opt/homebrew/bin/whisper-cli" }
     static var cliAvailable: Bool { ToolPath.resolve("whisper-cli") != nil }
+    /// 转写引擎 = 常驻 whisper-server（内置或系统安装）
+    static var serverAvailable: Bool { ToolPath.resolve("whisper-server") != nil }
     // ggml-medium-q5_0 (multilingual, quantized) — better zh accuracy, fast enough resident.
     // Override via UserDefaults "whisperModel".
     static var model: String {
@@ -22,7 +24,7 @@ enum Whisper {
     }
 
     static func available() -> Bool {
-        FileManager.default.isExecutableFile(atPath: cli) && FileManager.default.fileExists(atPath: model)
+        serverAvailable && FileManager.default.fileExists(atPath: model)
     }
 
     /// afconvert → 16 kHz int16 mono, then whisper-cli (zh). Returns plain transcript text.

@@ -406,7 +406,7 @@ final class AppStore: ObservableObject {
     private func beginCapture(openPanel: Bool) {
         guard !capture.isCapturing, !startInFlight, !stopInFlight else { return }
         guard Whisper.available() else {
-            showToast(Whisper.cliAvailable ? "缺少转写模型，请在设置中下载" : "未安装转写引擎（brew install whisper-cpp）")
+            showToast(Whisper.serverAvailable ? "缺少转写模型，请在设置中下载" : "转写引擎异常，请重新安装应用")
             showRecPanel = true          // 面板里有黄条和「去设置」
             return
         }

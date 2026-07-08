@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// 外部 CLI 的路径发现 —— 不再假设 Apple Silicon Homebrew 一种安装方式。
 /// 顺序：ARM brew → Intel brew/手动 → ~/.local/bin → ~/bin → 登录 shell 的 PATH
@@ -13,6 +14,12 @@ enum ToolPath {
         lock.unlock()
 
         let fm = FileManager.default
+        // 内置优先：随 app 分发的引擎（Contents/MacOS/<name>）
+        if let aux = Bundle.main.url(forAuxiliaryExecutable: name)?.path,
+           fm.isExecutableFile(atPath: aux) {
+            lock.lock(); cache[name] = aux; lock.unlock()
+            return aux
+        }
         let candidates = [
             "/opt/homebrew/bin/\(name)",
             "/usr/local/bin/\(name)",
