@@ -398,6 +398,11 @@ final class AppStore: ObservableObject {
     /// 幂等 start：面板按钮 / 菜单栏 / 自动检测同拍触发也只起一条流。
     private func beginCapture(openPanel: Bool) {
         guard !capture.isCapturing, !startInFlight, !stopInFlight else { return }
+        guard Whisper.available() else {
+            showToast(Whisper.cliAvailable ? "缺少转写模型，请在设置中下载" : "未安装转写引擎（brew install whisper-cpp）")
+            showRecPanel = true          // 面板里有黄条和「去设置」
+            return
+        }
         startInFlight = true
         freshLiveID = nil            // 上一场的"纪要已生成"完成态让位给新录制
         if openPanel { showRecPanel = true }

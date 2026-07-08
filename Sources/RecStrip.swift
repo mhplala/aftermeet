@@ -130,12 +130,15 @@ struct RecPanel: View {
     @EnvironmentObject var cap: CaptureService
     @State private var nameEdit = ""
 
+    private var engineReady: Bool { Whisper.available() }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("会中 · 本地实时转写")
                 .font(Theme.mono(10, .semibold)).tracking(1.0)
                 .foregroundColor(Theme.inkMuted).textCase(.uppercase)
 
+            if !engineReady { missingEngineRow }
             nameRow
             if !cap.calendarSuggestion.isEmpty && nameEdit.isEmpty { suggestionRow }
             autoStartRow
@@ -152,6 +155,12 @@ struct RecPanel: View {
                 Spacer()
                 controlButton
             }
+            // 启动失败的原因（缺权限/引擎中断）原来只写进这个字段但没显示 —— 必须可见
+            if !cap.isCapturing, statusIsError {
+                Text(cap.status)
+                    .font(Theme.ui(11)).foregroundColor(Theme.danger500)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(16)
         .frame(width: 340)
@@ -161,6 +170,37 @@ struct RecPanel: View {
 
     private var timeString: String {
         String(format: "%02d:%02d", cap.elapsed / 60, cap.elapsed % 60)
+    }
+
+    private var statusIsError: Bool {
+        cap.status.contains("权限") || cap.status.contains("未找到") || cap.status.contains("中断")
+    }
+
+    /// 转写引擎或模型缺失：录制无法开始，给出去处
+    private var missingEngineRow: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12)).foregroundColor(Theme.warn500)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(Whisper.cliAvailable ? "缺少转写模型" : "未安装转写引擎")
+                    .font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkPrimary)
+                Text(Whisper.cliAvailable ? "下载模型后即可录制" : "brew install whisper-cpp，并下载模型")
+                    .font(Theme.mono(9.5)).foregroundColor(Theme.inkTertiary)
+            }
+            Spacer()
+            Button {
+                store.showRecPanel = false
+                store.go(.settings)
+            } label: {
+                Text("去设置").font(Theme.ui(11.5, .semibold)).foregroundColor(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Theme.inkGrad).clipShape(Capsule())
+                    .contentShape(Capsule())
+            }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, 11).padding(.vertical, 9)
+        .background(Theme.warn50)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 
     private var nameRow: some View {
@@ -253,6 +293,7 @@ struct RecPanel: View {
             .glow(cap.isCapturing ? Theme.danger500 : Color.black, radius: 9, opacity: 0.28)
         }
         .buttonStyle(.plain)
-        .disabled(store.refining)
+        .disabled(store.refining || (!cap.isCapturing && !engineReady))
+        .opacity(!cap.isCapturing && !engineReady ? 0.4 : 1)
     }
 }
