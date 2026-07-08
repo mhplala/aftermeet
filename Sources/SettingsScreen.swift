@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Whisper 模型下载器（hf-mirror 直连；内网被拦时诚实报错）
 
@@ -22,7 +24,42 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
         return base
     }
 
-    private lazy var session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    private lazy var session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30          // 停滞 30 秒就失败换源，别无限转圈
+        cfg.timeoutIntervalForResource = 4 * 3600   // 慢网整体上限 4 小时
+        return URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+    }()
+
+    enum ImportResult { case imported(String), cancelled, failed(String) }
+
+    /// 浏览器逃生门下载完的文件从「下载」导入模型目录。
+    /// 浏览器走用户自己的代理/DoH，经常是内网环境里唯一通的路。
+    static func importModelInteractively() -> ImportResult {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        panel.allowedContentTypes = [UTType(filenameExtension: "bin")].compactMap { $0 }
+        panel.message = "选择浏览器下载好的 ggml-*.bin 模型文件"
+        guard panel.runModal() == .OK, let src = panel.url else { return .cancelled }
+        let name = src.lastPathComponent
+        guard name.hasPrefix("ggml-"), name.hasSuffix(".bin") else {
+            return .failed("不是 whisper 模型文件（应为 ggml-*.bin）")
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: src.path)[.size] as? Int64) ?? 0
+        guard size > 30_000_000 else {
+            return .failed("文件不完整（\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))），可能没下载完")
+        }
+        let dest = dir.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: dest)
+        do {
+            try FileManager.default.copyItem(at: src, to: dest)
+            return .imported(name)
+        } catch {
+            return .failed("导入失败：\(error.localizedDescription)")
+        }
+    }
 
     func download(_ file: String) {
         guard progress[file] == nil else { return }
@@ -251,9 +288,22 @@ struct SettingsScreen: View {
             }
 
             row {
-                Text("手动下载的模型放入模型目录后自动识别")
+                Text("应用内下载不通时：浏览器下载后点「导入模型文件」即可")
                     .font(Theme.mono(10)).foregroundColor(Theme.inkMuted)
                 Spacer()
+                Button {
+                    switch ModelDownloader.importModelInteractively() {
+                    case .imported: scanModels(); store.showToast("模型已导入")
+                    case .failed(let why): store.showToast(why)
+                    case .cancelled: break
+                    }
+                } label: {
+                    Text("导入模型文件…").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                        .padding(.horizontal, 11).padding(.vertical, 5)
+                        .background(Color.white).clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                        .contentShape(Capsule())
+                }.buttonStyle(.plain)
                 Button { NSWorkspace.shared.activateFileViewerSelecting([ModelDownloader.dir]) } label: {
                     Text("打开模型目录").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
                         .padding(.horizontal, 11).padding(.vertical, 5)

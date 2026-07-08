@@ -135,7 +135,35 @@ struct OnboardingView: View {
             .background(Theme.warmWhite)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rLG - 2, style: .continuous))
 
-            if !modelReady && downloader.progress[recommendedModel] == nil {
+            if !modelReady && downloader.errors[recommendedModel] != nil {
+                // 内网/代理环境 app 内直连经常不通，浏览器（走用户自己的代理）是兜底路
+                HStack(spacing: 10) {
+                    Button {
+                        if let url = URL(string: ModelDownloader.sources[0] + recommendedModel) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } label: {
+                        Text("用浏览器下载").font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkSecondary)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Theme.white).clipShape(Capsule())
+                            .overlay(Capsule().strokeBorder(Color.black.opacity(0.12), lineWidth: 1))
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain)
+                    Button {
+                        if case .imported = ModelDownloader.importModelInteractively() {
+                            downloader.errors[recommendedModel] = nil   // 触发重渲染，绿勾亮起
+                        }
+                    } label: {
+                        Text("导入下载好的文件…").font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkSecondary)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Theme.white).clipShape(Capsule())
+                            .overlay(Capsule().strokeBorder(Color.black.opacity(0.12), lineWidth: 1))
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain)
+                    Spacer()
+                }
+                .padding(.top, 12)
+            } else if !modelReady && downloader.progress[recommendedModel] == nil {
                 Text("也可以先跳过，稍后在 设置 → 转写模型 下载；下载完成前无法录制。")
                     .font(Theme.mono(10.5)).foregroundColor(Theme.inkMuted)
                     .padding(.top, 12)
