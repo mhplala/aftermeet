@@ -7,7 +7,7 @@ struct FollowupScreen: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 Overline("会前 · 自动追问", tracking: 1.2).padding(.bottom, 8)
                 Text("进度追问卡")
                     .font(Theme.display(36, .semibold)).tracking(-0.8).foregroundColor(Theme.inkPrimary)

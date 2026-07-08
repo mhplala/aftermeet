@@ -34,7 +34,7 @@ struct CalendarScreen: View {
         ScrollViewReader { proxy in
         HStack(alignment: .top, spacing: 0) {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 header
                 if loading {
                     Card(padding: 0) {

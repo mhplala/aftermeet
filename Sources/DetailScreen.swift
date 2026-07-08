@@ -12,7 +12,8 @@ struct DetailScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                // 普通 VStack：页内大量 fixedSize 多行文本，放进 Lazy 容器会触发测量循环卡死主线程
+                VStack(alignment: .leading, spacing: 14) {
                     breadcrumb
                     titleRow
                     metaRow
