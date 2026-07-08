@@ -505,12 +505,17 @@ final class AppStore: ObservableObject {
         let id = current.id
         guard !q.isEmpty, !qaPending.contains(id) else { return }
         let transcript = current.rawTranscript
+        // 多轮追问的上下文：本会已完成的问答轮（失败轮不带）
+        let history: [(q: String, a: String)] = (qaThreads[id] ?? []).compactMap { t in
+            guard let a = t.answer, !a.hasPrefix("回答失败") else { return nil }
+            return (q: t.question, a: a)
+        }
         qaThreads[id, default: []].append(QATurn(question: q, answer: nil))
         qaPending.insert(id)
         QAStore.save(qaThreads)
         Task {
             let answer: String
-            do { answer = try await Refine.ask(transcript: transcript, question: q) }
+            do { answer = try await Refine.ask(transcript: transcript, history: history, question: q) }
             catch { answer = "回答失败：\(error.localizedDescription)" }
             if var t = qaThreads[id], let i = t.lastIndex(where: { $0.answer == nil }) {
                 t[i].answer = answer

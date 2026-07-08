@@ -95,13 +95,28 @@ enum Refine {
     }
 
     static let qaSystem = """
-    你是这场会议的问答助手。只根据下面给你的会议逐字稿回答用户问题：准确、简洁、直接，能引用原话/数字就引用；逐字稿里没有的就直说"逐字稿里没提到",绝不编造。中文，别客套。
+    你是这场会议的分析伙伴，和用户（会议负责人）基于逐字稿深入讨论这场会。分两种情况：
+
+    - 事实类问题（谁说了什么、数字、结论、有没有提到某事）：只用逐字稿里的信息，能引原话/数字就引；确实没有就直说没提到，并补一句逐字稿里最接近的相关内容，别只甩一句"没提到"。
+    - 分析/评价/建议类问题（这会开得怎么样、谁的观点更站得住、哪里没聊透、下一步怎么办）：大胆给出你的判断和洞察，但每个观点都要落在逐字稿的证据上（谁说了什么、哪里绕圈、什么被跳过了）；属于推断的就标明是推断，不虚构没发生的事。
+
+    这是多轮对话，追问时结合上文理解所指（"你自己判断呢"="对上一个问题给出你的判断"）。中文，直接有观点，别客套，别写"作为AI"式免责。
     """
 
     /// Free-text Q&A grounded in one meeting's transcript — returns the answer text (not JSON).
-    static func ask(transcript: String, question: String) async throws -> String {
+    /// history = 此前的完整问答轮（多轮追问全靠它），只带最近几轮控 token。
+    static func ask(transcript: String, history: [(q: String, a: String)] = [],
+                    question: String) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
-            let user = "【会议逐字稿】\n\(String(transcript.prefix(24000)))\n\n【问题】\(question)"
+            var user = "【会议逐字稿】\n\(String(transcript.prefix(24000)))\n\n"
+            if !history.isEmpty {
+                user += "【此前对话】\n"
+                for t in history.suffix(6) {
+                    user += "问：\(t.q)\n答：\(String(t.a.prefix(1200)))\n"
+                }
+                user += "\n"
+            }
+            user += "【本轮问题】\(question)"
             var lastError = "回答失败"
             for _ in 1...2 {
                 do {
