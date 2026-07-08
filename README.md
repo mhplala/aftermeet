@@ -34,10 +34,11 @@
 
 ## 依赖
 
-| 依赖 | 用途 | 安装 |
+转写引擎（[whisper.cpp](https://github.com/ggerganov/whisper.cpp)）已内置，无需安装。
+
+| 依赖 | 用途 | 获取 |
 |---|---|---|
-| [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | 本地转写引擎（必需） | `brew install whisper-cpp` |
-| 转写模型 | ggml 格式，应用内可下载 | 设置 → 转写模型（推荐 Medium Q5） |
+| 转写模型 | ggml 格式，首次使用下载一次 | 设置 → 转写模型（推荐 Medium Q5） |
 | [lark-cli](https://github.com/larksuite) | 飞书链路：任务 / 日历 / 同步（可选） | 装好并登录后自动接入 |
 
 不装 lark-cli 也能用：本地转写、纪要、待办、检索全部可用，只是没有飞书侧的任务回写与日历比对。
@@ -69,8 +70,9 @@ SQLite + FTS5           飞书任务 / 群转发（lark-cli，用户身份）
 ## 从源码构建
 
 ```bash
-brew install xcodegen whisper-cpp
+brew install xcodegen cmake
 git clone https://github.com/mhplala/aftermeet.git && cd aftermeet
+./scripts/vendor-whisper.sh     # 静态编译内置转写引擎（一次即可）
 ./build.sh
 open .build/Build/Products/Debug/AfterMeet.app
 ```
