@@ -1,6 +1,29 @@
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Dev: `-obshot <dir>` 把引导五步离屏渲染成 PNG 后退出（UI 快照验证，不抢焦点）
+        guard let dir = UserDefaults.standard.string(forKey: "obshot") else { return }
+        NSLog("obshot: rendering to %@", dir)
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let store = AppStore()
+        for step in 0...4 {
+            store.showOnboarding = true
+            store.obStep = step
+            let r = ImageRenderer(content:
+                OnboardingView()
+                    .environmentObject(store)
+                    .frame(width: 900, height: 760)
+                    .background(Theme.canvas))
+            r.scale = 2
+            if let img = r.nsImage, let tiff = img.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("ob\(step).png"))
+            }
+        }
+        NSApp.terminate(nil)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // 录制中退出：杀掉常驻 whisper-server，别留 ~1GB 孤儿进程
         _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/pkill"),

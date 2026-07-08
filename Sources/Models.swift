@@ -295,7 +295,17 @@ final class AppStore: ObservableObject {
         case "daily":    screen = .daily
         default:         break
         }
-        if UserDefaults.standard.bool(forKey: "onboarding") { showOnboarding = true }
+        // 首启自动引导：老用户（库里已有数据）静默豁免，之后可从设置重看
+        if UserDefaults.standard.bool(forKey: "onboarding") {
+            showOnboarding = true
+            obStep = min(4, max(0, UserDefaults.standard.integer(forKey: "obstep")))   // dev: 直跳某步
+        } else if !Self.demoMode && !UserDefaults.standard.bool(forKey: "onboarded") {
+            if usingRealData {
+                UserDefaults.standard.set(true, forKey: "onboarded")   // 老用户，不打扰
+            } else {
+                showOnboarding = true
+            }
+        }
 
         if !Self.demoMode {
             Task { if let me = await Lark.me() { self.userName = me.name } }
@@ -714,10 +724,11 @@ final class AppStore: ObservableObject {
 
     // onboarding
     func obNext() {
-        if obStep >= 3 {
+        if obStep >= 4 {
             showOnboarding = false
             obStep = 0
-            showToast("设置完成，自动记录已开启")
+            UserDefaults.standard.set(true, forKey: "onboarded")
+            showToast(Whisper.available() ? "就绪，检测到会议时会自动提示录制" : "已完成，记得在设置中下载转写模型")
         } else {
             withAnimation(.easeOut(duration: 0.2)) { obStep += 1 }
         }
@@ -726,6 +737,7 @@ final class AppStore: ObservableObject {
     func obSkip() {
         showOnboarding = false
         obStep = 0
+        UserDefaults.standard.set(true, forKey: "onboarded")
     }
 
     /// "6/13" 距今逾期几天；解析不了（"—"、"Q3"）返回 nil。
