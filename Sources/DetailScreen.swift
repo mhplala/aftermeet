@@ -18,6 +18,9 @@ struct DetailScreen: View {
                     titleRow
                     metaRow
                     if let suggestion = store.calendarSuggestions[m.id] { renameChip(suggestion) }
+                    if let failure = m.displayBlocks.first(where: { $0.type == "refineFailed" }) {
+                        regenBanner(failure.text ?? "")
+                    }
                     NoteBlocksView(blocks: m.displayBlocks).padding(.top, 4)
                     todosSection
                     transcriptSection
@@ -54,6 +57,29 @@ struct DetailScreen: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Theme.blue50)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+    }
+
+    /// 提炼失败入库的会：给出原因和重试入口（转写完好，随时可再生成）
+    private func regenBanner(_ reason: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle").font(.system(size: 11)).foregroundColor(Theme.warn500)
+            Text("纪要生成失败\(reason.isEmpty ? "" : "：\(reason)")，转写已完整保存")
+                .font(Theme.ui(12)).foregroundColor(Theme.inkSecondary).lineLimit(2)
+            if store.regenPending.contains(m.id) {
+                ProgressView().controlSize(.small).padding(.leading, 2)
+            } else {
+                Button { store.regenerateNote(id: m.id) } label: {
+                    Text("重新生成").font(Theme.ui(11.5, .semibold)).foregroundColor(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Theme.inkGrad).clipShape(Capsule())
+                        .contentShape(Capsule())
+                }.buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Theme.warmWhite)
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 

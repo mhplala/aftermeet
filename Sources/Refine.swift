@@ -15,6 +15,22 @@ struct RefinedNote: Codable {
 
     enum CodingKeys: String, CodingKey { case title, todos, blocks, summary, keyPoints, decisions, disputes, nextAgenda }
 
+    // 自定义 init(from:) 会压掉 memberwise init，工厂方法要用得补一个显式的
+    init(title: String, todos: [RTodo], blocks: [NoteBlock]?,
+         summary: String? = nil, keyPoints: [String]? = nil, decisions: [RDecision]? = nil,
+         disputes: [RDispute]? = nil, nextAgenda: [String]? = nil) {
+        self.title = title; self.todos = todos; self.blocks = blocks
+        self.summary = summary; self.keyPoints = keyPoints; self.decisions = decisions
+        self.disputes = disputes; self.nextAgenda = nextAgenda
+    }
+
+    /// 提炼失败时的兜底：录音必须入库（绝不整场丢弃），块里带 refineFailed 标记，
+    /// 详情页据此给「重新生成」入口。标题保持"未命名会议"，打开详情时日历交叉比对会自动改名。
+    static func failed(reason: String) -> RefinedNote {
+        RefinedNote(title: "未命名会议", todos: [],
+                    blocks: [NoteBlock(type: "refineFailed", text: reason)])
+    }
+
     // Tolerant decode: the mini model sometimes emits a legacy field in the wrong shape (e.g.
     // nextAgenda as an object instead of [String]). Decode each defensively so one stray field
     // can't fail the whole note — these are only fallbacks; the real content lives in `blocks`.

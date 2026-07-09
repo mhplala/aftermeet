@@ -152,6 +152,13 @@ enum LiveStore {
         _ = upsertChecked(StoredLiveMeeting(id: old.id, title: title, timestamp: old.timestamp,
                                             durationSec: old.durationSec, transcript: old.transcript, note: old.note))
     }
+
+    /// 重新生成纪要后原地替换 note（时间戳/转写不动）。
+    static func replaceNote(id: String, note: RefinedNote, title: String) {
+        guard let old = load().first(where: { $0.id == id }) else { return }
+        _ = upsertChecked(StoredLiveMeeting(id: old.id, title: title, timestamp: old.timestamp,
+                                            durationSec: old.durationSec, transcript: old.transcript, note: note))
+    }
 }
 
 // MARK: - 每日综述 cache — one digest (block list) per day, keyed by dayChip ("6/22")

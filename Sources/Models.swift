@@ -346,30 +346,118 @@ final class AppStore: ObservableObject {
         refining = true
         let stopped = Date()                       // 停录时刻（提炼要几十秒，别把时间戳推迟）
         Task {
+            // 提炼失败绝不丢会：带失败标记入库，详情页可重新生成（曾经整场 2 小时的会只剩 toast）
+            var note: RefinedNote
+            var refineError: String? = nil
+            do { note = try await Refine.note(from: transcript) }
+            catch {
+                refineError = error.localizedDescription
+                note = .failed(reason: refineError!)
+            }
+            let userName = capture.meetingName.trimmingCharacters(in: .whitespaces)
+            if userName.isEmpty, refineError == nil { capture.setMeetingName(note.title) }   // 豆包 names the file by content
+            let now = stopped
+            let title = userName.isEmpty ? note.title : userName
+            let storedID = "live-\(Int(now.timeIntervalSince1970))"
+            let persisted = LiveStore.append(StoredLiveMeeting(          // persist → survives a restart
+                id: storedID, title: title,
+                timestamp: now.timeIntervalSince1970, durationSec: durationSec,
+                transcript: transcript, note: note))
+            if !persisted { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
+            liveDurations[storedID] = durationSec
+            let vm = MeetingVM(live: note, transcript: transcript, durationSec: durationSec,
+                               now: now, title: title)
+            addLiveMeeting(vm)
+            refining = false
+            freshLiveID = vm.id            // 录制条转完成态，用户点了才跳，不抢页面
+            showToast(refineError == nil ? "纪要已生成:\(vm.title)"
+                                         : "提炼失败，录音已保存，可在详情页重新生成")
+        }
+    }
+
+    /// 提炼失败的会（refineFailed 块）在详情页重试生成纪要。
+    @Published var regenPending: Set<String> = []
+    func regenerateNote(id: String) {
+        guard !regenPending.contains(id),
+              let m = meetings.first(where: { $0.id == id }) else { return }
+        let transcript = m.rawTranscript
+        guard transcript.count >= 4 else { showToast("这场会没有可用的转写文本"); return }
+        regenPending.insert(id)
+        Task {
             do {
                 let note = try await Refine.note(from: transcript)
-                let userName = capture.meetingName.trimmingCharacters(in: .whitespaces)
-                if userName.isEmpty { capture.setMeetingName(note.title) }   // 豆包 names the file by content
-                let now = stopped
-                let title = userName.isEmpty ? note.title : userName
-                let storedID = "live-\(Int(now.timeIntervalSince1970))"
-                let persisted = LiveStore.append(StoredLiveMeeting(          // persist → survives a restart
-                    id: storedID, title: title,
-                    timestamp: now.timeIntervalSince1970, durationSec: durationSec,
-                    transcript: transcript, note: note))
-                if !persisted { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
-                liveDurations[storedID] = durationSec
-                let vm = MeetingVM(live: note, transcript: transcript, durationSec: durationSec,
-                                   now: now, title: title)
-                addLiveMeeting(vm)
-                refining = false
-                freshLiveID = vm.id            // 录制条转完成态，用户点了才跳，不抢页面
-                showToast("纪要已生成:\(vm.title)")
+                // "未命名会议"或占位标题换成生成的；用户/日历改过的名字保留
+                let keepTitle = !(m.title.isEmpty || m.title.hasPrefix("未命名会议"))
+                let title = keepTitle ? m.title : note.title
+                LiveStore.replaceNote(id: id, note: note, title: title)
+                if let i = meetings.firstIndex(where: { $0.id == id }),
+                   let stored = LiveStore.load().first(where: { $0.id == id }) {
+                    meetings[i] = MeetingVM(live: note, transcript: stored.transcript,
+                                            durationSec: stored.durationSec,
+                                            now: Date(timeIntervalSince1970: stored.timestamp), title: title)
+                    rederiveTodos()
+                    refreshDerived()
+                }
+                showToast("纪要已生成:\(title)")
             } catch {
-                refining = false
                 showToast("提炼失败：\(error.localizedDescription)")
             }
+            regenPending.remove(id)
         }
+    }
+
+    /// 转写档案里的孤儿录音（app 早期版本提炼失败被丢弃的）→ 补生成纪要入库。
+    @Published var archivePending: Set<String> = []
+    /// 该时间段是否已有本地会议（档案条目对应的会存在 → 不用补生成）
+    func hasLiveMeeting(overlapping start: Date, _ end: Date) -> Bool {
+        for m in meetings where m.id.hasPrefix("live-") {
+            guard let ts = Double(m.id.dropFirst("live-".count)) else { continue }
+            let mEnd = ts
+            let mStart = ts - Double(liveDurations[m.id] ?? 600)
+            // ±10 分钟余量：转写文件时间和停录时间戳有偏移
+            if mStart - 600 < end.timeIntervalSince1970, start.timeIntervalSince1970 < mEnd + 600 {
+                return true
+            }
+        }
+        return false
+    }
+
+    func generateFromArchive(_ f: TranscriptFile) {
+        guard !archivePending.contains(f.title) else { return }
+        archivePending.insert(f.title)
+        Task {
+            do {
+                let note = try await Refine.note(from: f.body)
+                let stoppedTs = f.end.timeIntervalSince1970
+                let dur = max(60, Int(f.end.timeIntervalSince(f.start)))
+                let id = "live-\(Int(stoppedTs))"
+                let stored = StoredLiveMeeting(id: id, title: note.title, timestamp: stoppedTs,
+                                               durationSec: dur, transcript: f.body, note: note)
+                if !LiveStore.append(stored) { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
+                liveDurations[id] = dur
+                let vm = MeetingVM(live: note, transcript: f.body, durationSec: dur,
+                                   now: Date(timeIntervalSince1970: stoppedTs), title: note.title)
+                insertLiveMeetingSorted(vm, ts: stoppedTs)
+                showToast("纪要已生成:\(note.title)")
+            } catch {
+                showToast("提炼失败：\(error.localizedDescription)")
+            }
+            archivePending.remove(f.title)
+        }
+    }
+
+    /// 补生成的会是旧会，按时间戳落到正确位置（meetings 新→旧）。
+    private func insertLiveMeetingSorted(_ vm: MeetingVM, ts: Double) {
+        if !usingRealData { meetings = [] }
+        usingRealData = true
+        let idx = meetings.firstIndex { m in
+            guard m.id.hasPrefix("live-"), let t = Double(m.id.dropFirst("live-".count)) else { return false }
+            return t < ts
+        } ?? meetings.count
+        meetings.insert(vm, at: idx)
+        if idx <= selectedMeeting { selectedMeeting += 1 }
+        rederiveTodos()
+        refreshDerived()
     }
 
     func addLiveMeeting(_ vm: MeetingVM) {

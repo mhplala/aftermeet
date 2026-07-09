@@ -8,6 +8,8 @@ struct TranscriptFile: Identifiable {
     let preview: String
     let body: String
     let paragraphs: [String]   // 预切好的段落，几万字全文用 LazyVStack 按段懒渲染
+    let start: Date            // 首段开始（文件名解析）
+    let end: Date              // 末段最后写入 —— 补生成纪要时用作停录时刻
 }
 
 /// 会议库 —— 所有会议的家：纪要（按天分组）+ 原始转写（本地存档全文）。
@@ -235,9 +237,9 @@ struct TranscriptArchiveView: View {
             } else {
                 Card(padding: 0) {
                     VStack(spacing: 0) {
+                        // 行内有「生成纪要」按钮，外层不能再包 Button（嵌套按钮会吞点击）
                         ForEach(Array(files.enumerated()), id: \.element.id) { idx, f in
-                            Button { selected = f } label: { row(f, last: idx == files.count - 1) }
-                                .buttonStyle(.plain)
+                            row(f, last: idx == files.count - 1)
                         }
                     }
                     .padding(.horizontal, 14).padding(.vertical, 3)
@@ -249,25 +251,43 @@ struct TranscriptArchiveView: View {
     private func row(_ f: TranscriptFile, last: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 13) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
-                        .fill(Theme.warmWhite2).frame(width: 36, height: 36)
-                    Image(systemName: "waveform").font(.system(size: 15)).foregroundColor(Theme.inkSecondary)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(f.title).font(Theme.ui(13.5, .medium)).foregroundColor(Theme.inkPrimary).lineLimit(1)
-                        Text("\(f.chars) 字").font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
+                HStack(alignment: .top, spacing: 13) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
+                            .fill(Theme.warmWhite2).frame(width: 36, height: 36)
+                        Image(systemName: "waveform").font(.system(size: 15)).foregroundColor(Theme.inkSecondary)
                     }
-                    Text(f.preview).font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(f.title).font(Theme.ui(13.5, .medium)).foregroundColor(Theme.inkPrimary).lineLimit(1)
+                            Text("\(f.chars) 字").font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
+                        }
+                        Text(f.preview).font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
                 }
-                Spacer()
+                .contentShape(Rectangle())
+                .onTapGesture { selected = f }
+
+                // 孤儿录音（这个时间段没有对应的会）→ 一键补生成纪要
+                if store.archivePending.contains(f.title) {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("生成中").font(Theme.ui(11.5)).foregroundColor(Theme.inkTertiary)
+                    }.padding(.top, 8)
+                } else if !store.hasLiveMeeting(overlapping: f.start, f.end) {
+                    Button { store.generateFromArchive(f) } label: {
+                        Text("生成纪要").font(Theme.ui(11.5, .semibold)).foregroundColor(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .background(Theme.inkGrad).clipShape(Capsule())
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain).padding(.top, 6)
+                }
                 Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Theme.inkMuted).padding(.top, 4)
             }
             .padding(.vertical, 13).padding(.horizontal, 8)
-            .contentShape(Rectangle())
             if !last { Hairline() }
         }
     }
@@ -367,7 +387,8 @@ struct TranscriptArchiveView: View {
             if !cur.isEmpty { paras.append(cur) }
             return TranscriptFile(url: g.first!.url, title: title, chars: body.count,
                                   preview: String(body.replacingOccurrences(of: "\n", with: " ").prefix(90)),
-                                  body: body, paragraphs: paras)
+                                  body: body, paragraphs: paras,
+                                  start: g.first!.start, end: g.last!.end)
         }.reversed()
     }
 
