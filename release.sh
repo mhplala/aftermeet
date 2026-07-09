@@ -56,4 +56,9 @@ echo "▸ staple"
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 
+# 硬校验门：公证/staple 任何一步被网络吞掉，都不允许带着未公证的 DMG 走到发布
+echo "▸ 验证 Gatekeeper"
+spctl -a -t open --context context:primary-signature -v "$DMG" 2>&1 | grep -q "Notarized Developer ID" \
+  || { echo "❌ DMG 未通过公证验证，禁止发布"; exit 1; }
+
 echo "✅ $DMG"
