@@ -251,24 +251,27 @@ struct TranscriptArchiveView: View {
     private func row(_ f: TranscriptFile, last: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 13) {
-                HStack(alignment: .top, spacing: 13) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
-                            .fill(Theme.warmWhite2).frame(width: 36, height: 36)
-                        Image(systemName: "waveform").font(.system(size: 15)).foregroundColor(Theme.inkSecondary)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text(f.title).font(Theme.ui(13.5, .medium)).foregroundColor(Theme.inkPrimary).lineLimit(1)
-                            Text("\(f.chars) 字").font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
+                // 导航用 Button（onTapGesture 会被窗口激活时的 first-responder 抢焦点吞掉首击 → 要点两次）；
+                // 「生成纪要」是并列的另一个 Button，不嵌套，各自独立命中
+                Button { selected = f } label: {
+                    HStack(alignment: .top, spacing: 13) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
+                                .fill(Theme.warmWhite2).frame(width: 36, height: 36)
+                            Image(systemName: "waveform").font(.system(size: 15)).foregroundColor(Theme.inkSecondary)
                         }
-                        Text(f.preview).font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
-                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(f.title).font(Theme.ui(13.5, .medium)).foregroundColor(Theme.inkPrimary).lineLimit(1)
+                                Text("\(f.chars) 字").font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
+                            }
+                            Text(f.preview).font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
+                                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
                     }
-                    Spacer(minLength: 8)
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { selected = f }
+                    .contentShape(Rectangle())
+                }.buttonStyle(.plain)
 
                 // 孤儿录音（这个时间段没有对应的会）→ 一键补生成纪要
                 if store.archivePending.contains(f.title) {
