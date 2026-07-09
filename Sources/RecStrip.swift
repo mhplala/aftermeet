@@ -256,17 +256,22 @@ struct RecPanel: View {
     }
 
     private var liveBox: some View {
-        ScrollViewReader { proxy in
+        // 实时预览只渲染尾部：录久了 liveText 累积几万字，整段塞进带 fixedSize 的 Text
+        // 会全量布局测量卡死主线程（打开面板转菊花）。用户只需看最近说了什么。
+        let full = cap.liveText
+        let tail = full.count > 1600 ? "……（上文从略）\n" + String(full.suffix(1600)) : full
+        return ScrollViewReader { proxy in
             ScrollView {
-                Text(cap.liveText.isEmpty ? "正在聆听…" : cap.liveText)
+                Text(full.isEmpty ? "正在聆听…" : tail)
                     .font(Theme.ui(12.5))
-                    .foregroundColor(cap.liveText.isEmpty ? Theme.inkTertiary : Theme.inkPrimary.opacity(0.88))
+                    .foregroundColor(full.isEmpty ? Theme.inkTertiary : Theme.inkPrimary.opacity(0.88))
                     .lineSpacing(5).frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Color.clear.frame(height: 1).id("bottom")
             }
             .frame(height: 120)
-            .onChange(of: cap.liveText) { _, _ in
+            // 用 count 触发（廉价 Int 比较），不拿几万字整串做 diff
+            .onChange(of: full.count) { _, _ in
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
