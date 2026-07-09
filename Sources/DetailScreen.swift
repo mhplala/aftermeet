@@ -146,6 +146,24 @@ struct DetailScreen: View {
                 .foregroundColor(Theme.inkPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
+            // 本地录制的会：纪要不满意可重新生成（换更详尽的提炼）
+            if m.id.hasPrefix("live-") && !m.rawTranscript.isEmpty {
+                if store.regenPending.contains(m.id) {
+                    ProgressView().controlSize(.small).padding(.top, 9)
+                } else {
+                    Button { store.regenerateNote(id: m.id) } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.inkTertiary)
+                            .padding(7)
+                            .background(Color.white.opacity(0.75))
+                            .clipShape(Circle())
+                            .overlay(Circle().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                            .contentShape(Circle())
+                    }.buttonStyle(.plain).padding(.top, 5)
+                    .help("重新生成纪要")
+                }
+            }
             Pill(text: m.badge, bg: Theme.accentSurface, fg: Theme.accentInk)
                 .padding(.top, 8)
         }
