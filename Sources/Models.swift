@@ -318,6 +318,7 @@ final class AppStore: ObservableObject {
             buildArchiveIndex()      // 转写档案全文进搜索
             calEvents = CalCache.load()   // 上次的日历先顶上（秒开），随后后台刷新
             loadCalendar()
+            autoRecoverOrphans()     // 近 7 天有转写没纪要的录音，默认补生成
         }
         refreshDerived()
     }
@@ -426,23 +427,58 @@ final class AppStore: ObservableObject {
         guard !archivePending.contains(f.title) else { return }
         archivePending.insert(f.title)
         Task {
-            do {
-                let note = try await Refine.note(from: f.body)
-                let stoppedTs = f.end.timeIntervalSince1970
-                let dur = max(60, Int(f.end.timeIntervalSince(f.start)))
-                let id = "live-\(Int(stoppedTs))"
-                let stored = StoredLiveMeeting(id: id, title: note.title, timestamp: stoppedTs,
-                                               durationSec: dur, transcript: f.body, note: note)
-                if !LiveStore.append(stored) { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
-                liveDurations[id] = dur
-                let vm = MeetingVM(live: note, transcript: f.body, durationSec: dur,
-                                   now: Date(timeIntervalSince1970: stoppedTs), title: note.title)
-                insertLiveMeetingSorted(vm, ts: stoppedTs)
-                showToast("纪要已生成:\(note.title)")
-            } catch {
-                showToast("提炼失败：\(error.localizedDescription)")
-            }
+            await ingestArchive(f, quiet: false)
             archivePending.remove(f.title)
+        }
+    }
+
+    /// 档案 → 会议（提炼失败也入库，详情页可重试 —— 和 ingestLive 同一条"绝不丢会"原则）
+    private func ingestArchive(_ f: TranscriptFile, quiet: Bool) async {
+        var note: RefinedNote
+        var refineError: String? = nil
+        do { note = try await Refine.note(from: f.body) }
+        catch {
+            refineError = error.localizedDescription
+            note = .failed(reason: refineError!)
+        }
+        let stoppedTs = f.end.timeIntervalSince1970
+        let dur = max(60, Int(f.end.timeIntervalSince(f.start)))
+        let id = "live-\(Int(stoppedTs))"
+        let stored = StoredLiveMeeting(id: id, title: note.title, timestamp: stoppedTs,
+                                       durationSec: dur, transcript: f.body, note: note)
+        if !LiveStore.append(stored) { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
+        liveDurations[id] = dur
+        let vm = MeetingVM(live: note, transcript: f.body, durationSec: dur,
+                           now: Date(timeIntervalSince1970: stoppedTs), title: note.title)
+        insertLiveMeetingSorted(vm, ts: stoppedTs)
+        if refineError != nil {
+            showToast("发现未生成纪要的录音，提炼失败已保留，可在详情页重试")
+        } else if !quiet {
+            showToast("纪要已生成:\(note.title)")
+        }
+    }
+
+    /// 启动自动恢复：近 7 天的孤儿录音（有转写、没会议）默认补生成纪要，不用用户动手。
+    /// 更早的陈年档案留给列表里的手动按钮，避免首次升级时批量轰炸。
+    func autoRecoverOrphans() {
+        guard !Self.demoMode else { return }
+        Task {
+            let files = await Task.detached(priority: .utility) { TranscriptArchiveView.loadFiles() }.value
+            let now = Date()
+            let orphans = files.filter { f in
+                f.chars >= 300                                            // 噪音碎片不成会
+                && f.end > now.addingTimeInterval(-7 * 86400)             // 只自动救近 7 天
+                && f.end < now.addingTimeInterval(-120)                   // 正在写入的（录音中）不碰
+                && !hasLiveMeeting(overlapping: f.start, f.end)
+            }
+            guard !orphans.isEmpty else { return }
+            showToast("发现 \(orphans.count) 场未生成纪要的录音，正在补生成…")
+            for f in orphans.sorted(by: { $0.end < $1.end }) {            // 串行，旧的先落
+                guard !archivePending.contains(f.title) else { continue }
+                archivePending.insert(f.title)
+                await ingestArchive(f, quiet: false)
+                archivePending.remove(f.title)
+            }
         }
     }
 
