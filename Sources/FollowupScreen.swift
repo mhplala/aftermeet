@@ -246,7 +246,7 @@ struct SampleFollowCard: View {
                 ForEach(Array(store.fitems.enumerated()), id: \.element.id) { idx, f in
                     Button { store.toggleFitem(f.id) } label: {
                         HStack(spacing: 12) {
-                            Circle().fill(f.done ? Theme.green500 : Theme.danger50).frame(width: 16, height: 16)
+                            Circle().fill(f.done ? Theme.green500 : Theme.danger500).frame(width: 16, height: 16)   // 未完成用亮红实心，和完成绿点对称；danger50 深色下太暗看不见
                             Text(f.text).font(Theme.ui(13.5))
                                 .foregroundColor(f.done ? Theme.inkTertiary : Theme.inkPrimary.opacity(0.85))
                             Spacer()

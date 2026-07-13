@@ -17,7 +17,7 @@ struct ToastView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 13)
-        .background(Theme.ink1000)
+        .background(Theme.dyn("111111", "2f2f35"))   // 恒深浮层底（配白字）；ink1000 深色会翻白
         .clipShape(Capsule())
         .popShadow()
     }

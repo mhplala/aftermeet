@@ -137,7 +137,8 @@ struct CrossTodoRow: View {
     private var checkbox: some View {
         ZStack {
             RoundedRectangle(cornerRadius: Theme.rXS, style: .continuous)
-                .fill(done ? Theme.accent : Color.clear)
+                // 完成态用「深浅都深」的底 + 白勾：accent 深色会翻成近白，白底白勾会刺眼且看不见勾
+                .fill(done ? Theme.dyn("111111", "3a3a40") : Color.clear)
                 .frame(width: 20, height: 20)
                 .overlay {
                     if !done {

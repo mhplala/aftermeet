@@ -109,7 +109,7 @@ struct DailyScreen: View {
                     Button { store.generateDigest(day: day, force: true) } label: {
                         Text("生成综述").font(Theme.ui(13, .semibold)).foregroundColor(.white)
                             .padding(.horizontal, 18).padding(.vertical, 9)
-                            .background(Theme.accent)
+                            .background(Theme.inkGrad)   // 主按钮：深色转蓝白字；accent 底深色会翻白
                             .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
                     }.buttonStyle(.plain)
                 }.frame(maxWidth: .infinity).padding(.vertical, 40)
