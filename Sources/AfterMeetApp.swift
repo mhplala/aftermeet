@@ -2,6 +2,10 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Dev: `-appearance dark|light` 强制外观（深色模式验证用；不传则跟随系统）
+        if let ap = UserDefaults.standard.string(forKey: "appearance") {
+            NSApp.appearance = NSAppearance(named: ap == "dark" ? .darkAqua : .aqua)
+        }
         // Dev: `-obshot <dir>` 把引导五步离屏渲染成 PNG 后退出（UI 快照验证，不抢焦点）
         guard let dir = UserDefaults.standard.string(forKey: "obshot") else { return }
         NSLog("obshot: rendering to %@", dir)

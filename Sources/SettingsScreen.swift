@@ -261,7 +261,7 @@ struct SettingsScreen: View {
                             } label: {
                                 Text("浏览器下载").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
                                     .padding(.horizontal, 11).padding(.vertical, 5)
-                                    .background(Color.white).clipShape(Capsule())
+                                    .background(Theme.white).clipShape(Capsule())
                                     .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                                     .contentShape(Capsule())
                             }.buttonStyle(.plain)
@@ -300,14 +300,14 @@ struct SettingsScreen: View {
                 } label: {
                     Text("导入模型文件…").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
                         .padding(.horizontal, 11).padding(.vertical, 5)
-                        .background(Color.white).clipShape(Capsule())
+                        .background(Theme.white).clipShape(Capsule())
                         .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                         .contentShape(Capsule())
                 }.buttonStyle(.plain)
                 Button { NSWorkspace.shared.activateFileViewerSelecting([ModelDownloader.dir]) } label: {
                     Text("打开模型目录").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
                         .padding(.horizontal, 11).padding(.vertical, 5)
-                        .background(Color.white).clipShape(Capsule())
+                        .background(Theme.white).clipShape(Capsule())
                         .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                         .contentShape(Capsule())
                 }.buttonStyle(.plain)
@@ -360,7 +360,7 @@ struct SettingsScreen: View {
                 } label: {
                     Text("复制授权命令").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
                         .padding(.horizontal, 11).padding(.vertical, 5)
-                        .background(Color.white).clipShape(Capsule())
+                        .background(Theme.white).clipShape(Capsule())
                         .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                         .contentShape(Capsule())
                 }.buttonStyle(.plain)
@@ -447,7 +447,7 @@ struct SettingsScreen: View {
                     }
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.horizontal, 11).padding(.vertical, 5)
-                    .background(Color.white).clipShape(Capsule())
+                    .background(Theme.white).clipShape(Capsule())
                     .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                     .contentShape(Capsule())
                 }
@@ -472,7 +472,7 @@ struct SettingsScreen: View {
                 } label: {
                     Text("打开数据目录").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
                         .padding(.horizontal, 11).padding(.vertical, 5)
-                        .background(Color.white).clipShape(Capsule())
+                        .background(Theme.white).clipShape(Capsule())
                         .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                         .contentShape(Capsule())
                 }.buttonStyle(.plain)

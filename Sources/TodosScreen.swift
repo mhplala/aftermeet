@@ -35,7 +35,7 @@ struct TodosScreen: View {
                 pill("已完成 \(doneN)", .done)
             }
             .padding(3)
-            .background(Color(hex: "ecebe8"))
+            .background(Theme.warmWhite2)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
             Spacer()
             Text("闭环率 \(closeRate)%").font(Theme.mono(11.5)).foregroundColor(Theme.inkTertiary)
@@ -124,7 +124,7 @@ struct CrossTodoRow: View {
                 }
                 .padding(.horizontal, 22).padding(.vertical, 15)
                 .background(flashing ? Theme.blue50
-                            : hover ? Color(hex: "f6f7fc") : Theme.white)
+                            : hover ? Theme.warmWhite : Theme.white)
                 .animation(.easeOut(duration: 0.4), value: flashing)
                 .contentShape(Rectangle())
                 if !last { Hairline() }
@@ -142,7 +142,7 @@ struct CrossTodoRow: View {
                 .overlay {
                     if !done {
                         RoundedRectangle(cornerRadius: Theme.rXS, style: .continuous)
-                            .strokeBorder(Color.black.opacity(0.18), lineWidth: 2)
+                            .strokeBorder(Theme.borderStrong, lineWidth: 2)
                     }
                 }
             if done {

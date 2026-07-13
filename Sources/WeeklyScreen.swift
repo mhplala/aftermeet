@@ -168,7 +168,7 @@ struct CloseRateChart: View {
                                 p.move(to: CGPoint(x: 0, y: h * f))
                                 p.addLine(to: CGPoint(x: w, y: h * f))
                             }
-                        }.stroke(Color.black.opacity(0.06), lineWidth: 1)
+                        }.stroke(Theme.borderWhisper, lineWidth: 1)   // 明暗自适应网格线
 
                         Path { p in
                             p.move(to: CGPoint(x: 0, y: h))

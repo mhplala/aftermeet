@@ -119,7 +119,7 @@ struct Sidebar: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.72))
+        .background(Theme.glassFill)
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous)
             .strokeBorder(Theme.borderWhisper, lineWidth: 1))
@@ -163,7 +163,7 @@ struct NavItem: View {
             .overlay {
                 if active {
                     RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.9), lineWidth: 1)
+                        .strokeBorder(Theme.glassBorder, lineWidth: 1)
                 }
             }
             .shadow(color: active ? Color.black.opacity(0.08) : .clear, radius: 5, x: 0, y: 2)
@@ -174,7 +174,7 @@ struct NavItem: View {
     }
 
     private var background: Color {
-        if active { return Color.white.opacity(0.82) }
-        return hover ? Color.white.opacity(0.5) : Color.clear
+        if active { return Theme.glassFill }
+        return hover ? Theme.hoverFill : Color.clear
     }
 }

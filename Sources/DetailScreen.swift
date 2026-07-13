@@ -95,7 +95,7 @@ struct DetailScreen: View {
                     }
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Color.white)
+                    .background(Theme.white)
                     .clipShape(Capsule())
                     .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                     .contentShape(Capsule())
@@ -128,7 +128,7 @@ struct DetailScreen: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundColor(Theme.inkSecondary)
                 .frame(width: 28, height: 28)
-                .background(Color.white)
+                .background(Theme.white)
                 .clipShape(Circle())
                 .overlay(Circle().strokeBorder(Theme.borderDefault, lineWidth: 1))
                 .contentShape(Circle())
@@ -156,7 +156,7 @@ struct DetailScreen: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(Theme.inkTertiary)
                             .padding(7)
-                            .background(Color.white.opacity(0.75))
+                            .background(Theme.glassFill)
                             .clipShape(Circle())
                             .overlay(Circle().strokeBorder(Theme.borderDefault, lineWidth: 1))
                             .contentShape(Circle())
@@ -419,7 +419,7 @@ struct DetailScreen: View {
             Button { showForward = true } label: {
                 Text("转发到群").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
                     .padding(.horizontal, 16).padding(.vertical, 9)
-                    .background(Color.white.opacity(0.75))
+                    .background(Theme.glassFill)
                     .clipShape(Capsule())
                     .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
             }
@@ -440,9 +440,9 @@ struct DetailScreen: View {
         }
         .padding(.leading, 21).padding(.trailing, 13).padding(.vertical, 12)
         .background(.ultraThinMaterial)
-        .background(Color.white.opacity(0.72))
+        .background(Theme.glassFill)
         .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.85), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Theme.glassBorder, lineWidth: 1))
         .popShadow()
         .frame(maxWidth: 920, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)

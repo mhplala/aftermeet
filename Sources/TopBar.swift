@@ -74,7 +74,7 @@ struct TopBar: View {
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 7)
-        .background(Color.white.opacity(0.72))
+        .background(Theme.glassFill)
         .clipShape(Capsule())
         .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
         .shadow(color: Color.black.opacity(0.10), radius: 5, x: 0, y: 2)
@@ -107,10 +107,10 @@ struct TopBar: View {
             }
             .frame(width: 380, alignment: .leading)
             .background(.ultraThinMaterial)
-            .background(Color.white.opacity(0.75))
+            .background(Theme.glassFill)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.9), lineWidth: 1))
+                .strokeBorder(Theme.glassBorder, lineWidth: 1))
             .popShadow()
         }
     }
@@ -153,7 +153,7 @@ struct TopBar: View {
                     .font(.system(size: 14, weight: .regular))
                     .foregroundColor(Theme.inkPrimary.opacity(0.8))
                     .frame(width: 33, height: 33)
-                    .background(bellHover ? Color.white.opacity(0.9) : Color.white.opacity(0.72))
+                    .background(bellHover ? Theme.glassFillStrong : Theme.glassFill)
                     .clipShape(Circle())
                     .overlay(Circle().strokeBorder(Theme.borderDefault, lineWidth: 1))
                     .shadow(color: Color.black.opacity(0.10), radius: 5, x: 0, y: 2)

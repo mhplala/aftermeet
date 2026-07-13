@@ -25,7 +25,7 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
+            Theme.dimOverlay.ignoresSafeArea()
                 .onTapGesture { }   // swallow taps on the dim layer
 
             VStack(spacing: 0) {
@@ -54,7 +54,7 @@ struct OnboardingView: View {
         HStack(spacing: 6) {
             ForEach(0..<5, id: \.self) { i in
                 Capsule()
-                    .fill(i <= store.obStep ? Theme.blue500 : Color.black.opacity(0.08))
+                    .fill(i <= store.obStep ? Theme.blue500 : Theme.paper300)
                     .frame(height: 3)
             }
         }
@@ -146,7 +146,7 @@ struct OnboardingView: View {
                         Text("用浏览器下载").font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkSecondary)
                             .padding(.horizontal, 12).padding(.vertical, 6)
                             .background(Theme.white).clipShape(Capsule())
-                            .overlay(Capsule().strokeBorder(Color.black.opacity(0.12), lineWidth: 1))
+                            .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                             .contentShape(Capsule())
                     }.buttonStyle(.plain)
                     Button {
@@ -157,7 +157,7 @@ struct OnboardingView: View {
                         Text("导入下载好的文件…").font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkSecondary)
                             .padding(.horizontal, 12).padding(.vertical, 6)
                             .background(Theme.white).clipShape(Capsule())
-                            .overlay(Capsule().strokeBorder(Color.black.opacity(0.12), lineWidth: 1))
+                            .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                             .contentShape(Capsule())
                     }.buttonStyle(.plain)
                     Spacer()

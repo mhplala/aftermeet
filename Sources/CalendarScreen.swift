@@ -144,7 +144,7 @@ struct CalendarScreen: View {
                 }
                 .foregroundColor(Theme.inkSecondary)
                 .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(Color.white)
+                .background(Theme.white)
                 .clipShape(Capsule())
                 .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                 .contentShape(Capsule())
@@ -158,7 +158,7 @@ struct CalendarScreen: View {
                 }
                 .foregroundColor(Theme.inkPrimary.opacity(0.85))
                 .padding(.horizontal, 13).padding(.vertical, 7)
-                .background(Color.white)
+                .background(Theme.white)
                 .clipShape(Capsule())
                 .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                 .contentShape(Capsule())

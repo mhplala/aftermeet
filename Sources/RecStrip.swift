@@ -85,7 +85,7 @@ struct RecStrip: View {
 
     private var background: AnyShapeStyle {
         switch phase {
-        case .idle, .refining: return AnyShapeStyle(Color.white.opacity(0.72))
+        case .idle, .refining: return AnyShapeStyle(Theme.glassFill)
         case .detected:        return AnyShapeStyle(Theme.blue50)
         case .recording:       return AnyShapeStyle(Theme.danger50)
         case .done:            return AnyShapeStyle(Theme.inkGrad)

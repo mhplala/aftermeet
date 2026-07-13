@@ -63,7 +63,7 @@ struct LibraryScreen: View {
         .background(Theme.paper300.opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.55), lineWidth: 1))
+            .strokeBorder(Theme.glassBorder, lineWidth: 1))
         .fixedSize()
     }
 
@@ -76,7 +76,7 @@ struct LibraryScreen: View {
                 .font(Theme.ui(12.5, .semibold))
                 .foregroundColor(on ? Theme.inkPrimary : Theme.inkSecondary)
                 .padding(.horizontal, 18).padding(.vertical, 8)
-                .background(on ? Color.white.opacity(0.92) : Color.clear)
+                .background(on ? Theme.glassFillStrong : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rMD - 1, style: .continuous))
                 .shadow(color: on ? Color.black.opacity(0.10) : .clear, radius: 4, x: 0, y: 2)
                 .contentShape(Rectangle())
@@ -146,7 +146,7 @@ struct LibraryScreen: View {
                     .background(Theme.warmWhite2)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.7), lineWidth: 1))
+                        .strokeBorder(Theme.glassBorder, lineWidth: 1))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(m.title)
                         .font(Theme.ui(13.5, .medium)).foregroundColor(Theme.inkPrimary).lineLimit(1)
@@ -304,7 +304,7 @@ struct TranscriptArchiveView: View {
                 }
                 .foregroundColor(Theme.inkSecondary)
                 .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(Color.white.opacity(0.8))
+                .background(Theme.glassFill)
                 .clipShape(Capsule())
                 .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
             }.buttonStyle(.plain).padding(.bottom, 14)
@@ -316,7 +316,7 @@ struct TranscriptArchiveView: View {
                 Button { NSWorkspace.shared.activateFileViewerSelecting([f.url]) } label: {
                     Text("在访达中显示").font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
                         .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(Color.white)
+                        .background(Theme.white)
                         .clipShape(Capsule())
                         .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
                 }.buttonStyle(.plain)

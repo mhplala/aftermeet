@@ -17,67 +17,90 @@ extension Color {
                   red: Double(r) / 255, green: Double(g) / 255,
                   blue: Double(b) / 255, opacity: Double(a) / 255)
     }
+
+    /// 明暗自适应色：随系统外观在 light / dark 之间切换。
+    init(light: Color, dark: Color) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            let darkMatch = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(darkMatch ? dark : light)
+        })
+    }
 }
 
-// MARK: - Design tokens（玻璃拟态版：冷墨 + 闭环绿；框架玻璃、工作区纯白）
+// MARK: - Design tokens（玻璃拟态版：冷墨 + 闭环绿；框架玻璃、工作区自适应明暗）
 
 enum Theme {
-    // surfaces — Cal.com 风：纯白工作区 + 中性灰
-    static let white       = Color(hex: "ffffff")
-    static let warmWhite   = Color(hex: "f7f7f7")
-    static let warmWhite2  = Color(hex: "f0f0f0")
-    static let paper300    = Color(hex: "e4e4e4")
-    static let pageBg      = Color(hex: "f3f3f3")
-    static let canvas      = Color(hex: "ffffff")
-    static let sidebarBg   = Color.white.opacity(0.34)
-    static let searchBg    = Color(hex: "f7f7f7")
+    /// hex 明暗对：`dyn("ffffff","1b1b1e")` = 浅色白 / 深色近黑
+    static func dyn(_ l: String, _ d: String) -> Color { Color(light: Color(hex: l), dark: Color(hex: d)) }
 
-    // ink / text — 中性黑灰
-    static let inkPrimary   = Color(hex: "111111")
-    static let inkSecondary = Color(hex: "4b4b4b")
-    static let inkTertiary  = Color(hex: "898989")
-    static let inkMuted     = Color(hex: "b5b5b5")
-    static let ink1000      = Color(hex: "111111")
-    static let ink900       = Color(hex: "1c1c1c")
-    static let ink800       = Color(hex: "2a2a2a")
-    static let ink700       = Color(hex: "444444")
-    static let onDark       = Color(hex: "ffffff")
+    // surfaces — 浅色 Cal.com 纯白工作区；深色近黑分层
+    static let white       = dyn("ffffff", "2a2a2e")   // 卡片 / 胶囊实底
+    static let warmWhite   = dyn("f7f7f7", "303034")
+    static let warmWhite2  = dyn("f0f0f0", "3a3a40")
+    static let paper300    = dyn("e4e4e4", "45454b")
+    static let pageBg      = dyn("f3f3f3", "1c1c1f")
+    static let canvas      = dyn("ffffff", "1b1b1e")   // 工作区背景
+    static let sidebarBg   = Color(light: Color.white.opacity(0.34), dark: Color.white.opacity(0.04))
+    static let searchBg    = dyn("f7f7f7", "303034")
+
+    // ink / text — 明暗反向
+    static let inkPrimary   = dyn("111111", "f3f3f5")
+    static let inkSecondary = dyn("4b4b4b", "bcbcc2")
+    static let inkTertiary  = dyn("898989", "909097")
+    static let inkMuted     = dyn("b5b5b5", "64646a")
+    static let ink1000      = dyn("111111", "f3f3f5")
+    static let ink900       = dyn("1c1c1c", "e6e6ea")
+    static let ink800       = dyn("2a2a2a", "d0d0d6")
+    static let ink700       = dyn("444444", "a8a8ae")
+    static let onDark       = Color(hex: "ffffff")           // 深色面板上的文字，恒白
     static let onDarkDim    = Color.white.opacity(0.65)
 
-    // blue — 唯一交互色
-    static let blue50  = Color(hex: "eff4ff")
-    static let blue100 = Color(hex: "dbe7ff")
-    static let blue500 = Color(hex: "3b82f6")
-    static let blue600 = Color(hex: "2563eb")
-    static let blue700 = Color(hex: "1d4ed8")
+    // blue — 唯一交互色（深色下略提亮）
+    static let blue50  = dyn("eff4ff", "17273f")
+    static let blue100 = dyn("dbe7ff", "1f3557")
+    static let blue500 = dyn("3b82f6", "4f92ff")
+    static let blue600 = dyn("2563eb", "3b82f6")
+    static let blue700 = dyn("1d4ed8", "76a9ff")            // 用作 blue50 上的文字，深色需变亮
 
     // brand (warm accent, 深度要点等暖橘点缀)
-    static let brand50  = Color(hex: "fbf1e8")
-    static let brand300 = Color(hex: "efb08a")
-    static let brand500 = Color(hex: "e0905a")
-    static let brand700 = Color(hex: "9c5526")
+    static let brand50  = dyn("fbf1e8", "34251b")
+    static let brand300 = dyn("efb08a", "c88a5f")
+    static let brand500 = dyn("e0905a", "e8a066")
+    static let brand700 = dyn("9c5526", "e0a877")          // 文字用，深色变亮
 
-    // green — 只做「完成/成功」语义色，不再是品牌主色
-    static let green50  = Color(hex: "eaf7ef")
-    static let green500 = Color(hex: "16a34a")
-    static let green700 = Color(hex: "15803d")
-    static let accent        = Color(hex: "111111")   // 主操作 = Cal 式黑
-    static let accentBright  = Color(hex: "2a2a2a")
-    static let accentInk     = Color(hex: "111111")
-    static let accentSurface = Color(hex: "f0f0f0")
-    static let accentGlow    = Color(hex: "22c55e")   // 在线小绿点
+    // green — 只做「完成/成功」语义色
+    static let green50  = dyn("eaf7ef", "16311f")
+    static let green500 = dyn("16a34a", "2ec46b")
+    static let green700 = dyn("15803d", "56d98a")          // 文字用，深色变亮
 
-    // warn / danger
-    static let warn50    = Color(hex: "fdf4e0")
-    static let warn500   = Color(hex: "a16207")
-    static let danger50  = Color(hex: "fdecec")
-    static let danger500 = Color(hex: "dc2626")
+    // accent — 主操作 = Cal 式黑；深色下随交互色走
+    static let accent        = dyn("111111", "f3f3f5")
+    static let accentBright  = dyn("2a2a2a", "d0d0d6")
+    static let accentInk     = dyn("111111", "f3f3f5")     // Pill 文字
+    static let accentSurface = dyn("f0f0f0", "3a3a40")     // Pill 底
+    static let accentGlow    = Color(hex: "22c55e")        // 在线小绿点，恒定
 
-    // hairlines — 中性
-    static let borderWhisper = Color.black.opacity(0.08)
-    static let borderDefault = Color.black.opacity(0.13)
-    static let borderStrong  = Color.black.opacity(0.20)
-    static let glassBorder   = Color.white.opacity(0.78)
+    // warn / danger（50 底色深色转暗、文字色深色转亮）
+    static let warn50    = dyn("fdf4e0", "332a12")
+    static let warn500   = dyn("a16207", "d9a441")
+    static let danger50  = dyn("fdecec", "3a1d1d")
+    static let danger500 = dyn("dc2626", "ff5b5b")
+
+    // hairlines — 浅色用黑描边，深色用白描边
+    static let borderWhisper = Color(light: Color.black.opacity(0.08), dark: Color.white.opacity(0.10))
+    static let borderDefault = Color(light: Color.black.opacity(0.13), dark: Color.white.opacity(0.14))
+    static let borderStrong  = Color(light: Color.black.opacity(0.20), dark: Color.white.opacity(0.24))
+    static let glassBorder   = Color(light: Color.white.opacity(0.78), dark: Color.white.opacity(0.12))
+
+    // 浮动条/胶囊叠在系统材质上的补光层（浅色补白、深色补黑）
+    static let glassFill       = Color(light: Color.white.opacity(0.72), dark: Color.black.opacity(0.34))
+    static let glassFillStrong = Color(light: Color.white.opacity(0.92), dark: Color.white.opacity(0.10))
+    // 悬停高亮：比 active 态更淡（浅色补白、深色补微光）
+    static let hoverFill        = Color(light: Color.white.opacity(0.5), dark: Color.white.opacity(0.06))
+    // 引用/代码块等次级实底
+    static let subtleFill  = dyn("fafafa", "343439")
+    // 蒙层（onboarding dim 等）
+    static let dimOverlay  = Color(light: Color.black.opacity(0.45), dark: Color.black.opacity(0.58))
 
     // radii
     static let rXS: CGFloat = 5
@@ -88,7 +111,6 @@ enum Theme {
     static let r2XL: CGFloat = 26
 
     // type — Inter Tight falls back to SF Pro; JetBrains Mono to SF Mono.
-    // Centralized so swapping in bundled fonts later is a one-line change.
     static func ui(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight)
     }
@@ -99,19 +121,19 @@ enum Theme {
         .system(size: size, weight: weight, design: .monospaced)
     }
 
-    /// 近黑面板（侧栏状态卡 / 追问横幅）
+    /// 深色浮起面板（侧栏状态卡 / 追问横幅）：浅色近黑，深色抬亮成可见的浮层
     static var inkGlass: LinearGradient {
-        LinearGradient(colors: [Color(hex: "111111").opacity(0.94), Color(hex: "1c1c1c").opacity(0.92)],
+        LinearGradient(colors: [dyn("111111", "2f2f35"), dyn("1c1c1c", "27272c")],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
     /// 成功绿（仅语义场景）
     static var greenGrad: LinearGradient {
-        LinearGradient(colors: [Color(hex: "16a34a"), Color(hex: "15803d")],
+        LinearGradient(colors: [dyn("16a34a", "22b562"), dyn("15803d", "1a9c4d")],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
-    /// 主按钮黑（Cal 式）
+    /// 主按钮：浅色 Cal 式黑，深色转蓝（白字通用，保证对比）
     static var inkGrad: LinearGradient {
-        LinearGradient(colors: [Color(hex: "1c1c1c"), Color(hex: "111111")],
+        LinearGradient(colors: [dyn("1c1c1c", "4f92ff"), dyn("111111", "3b82f6")],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }
