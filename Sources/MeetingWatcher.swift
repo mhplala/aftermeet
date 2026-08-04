@@ -106,12 +106,61 @@ final class MeetingWatcher {
         }
     }
 
+    /// 「麦克风在用」= 有 *AfterMeet 之外* 的进程正在这台默认输入设备上跑 input IO。
+    /// 自从 macOS 15 captureMicrophone（双流混音）后，AfterMeet 自己会整段录制占用麦克风，
+    /// 全局 kAudioDevicePropertyDeviceIsRunningSomewhere 因此永远为 true，auto-STOP 的
+    /// `!mic` 永远不触发 → 会议不自动结束。必须把自家进程排除掉，只看别的进程。
     private func micRunning() -> Bool {
         guard deviceID != kAudioObjectUnknown else { return false }
-        var val: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        let st = AudioObjectGetPropertyData(deviceID, &runningAddr, 0, nil, &size, &val)
-        return st == noErr && val != 0
+        return anyOtherProcessRunningInput(on: deviceID)
+    }
+
+    private func anyOtherProcessRunningInput(on device: AudioObjectID) -> Bool {
+        // 自家 PID → Process 对象，好跳过 AfterMeet 自己的占用
+        var pid: pid_t = getpid()
+        var ownID = AudioObjectID(kAudioObjectUnknown)
+        var paddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var psize = UInt32(MemoryLayout<AudioObjectID>.size)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &paddr,
+                                   UInt32(MemoryLayout<pid_t>.size), &pid, &psize, &ownID)
+
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr,
+              size >= MemoryLayout<AudioObjectID>.size else { return false }
+        var list = [AudioObjectID](repeating: kAudioObjectUnknown,
+                                   count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &list) == noErr else { return false }
+
+        for obj in list {
+            guard obj != AudioObjectID(kAudioObjectUnknown), obj != ownID else { continue }
+            // 只认「正在跑 input IO」的进程，再核对它确实在用这台设备
+            var runningInput: UInt32 = 0
+            var raddr = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyIsRunningInput,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var rsize = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(obj, &raddr, 0, nil, &rsize, &runningInput) == noErr,
+                  runningInput != 0 else { continue }
+            var daddr = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyDevices,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain)
+            var dsize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(obj, &daddr, 0, nil, &dsize) == noErr else { continue }
+            var devices = [AudioObjectID](repeating: kAudioObjectUnknown,
+                                          count: Int(dsize) / MemoryLayout<AudioObjectID>.size)
+            guard AudioObjectGetPropertyData(obj, &daddr, 0, nil, &dsize, &devices) == noErr else { continue }
+            if devices.contains(device) { return true }
+        }
+        return false
     }
 
     private func defaultInputDevice() -> AudioObjectID {
