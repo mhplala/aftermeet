@@ -7,6 +7,8 @@ import CoreAudio
 /// every few seconds so a meeting window opening/closing without a mic-state change is still caught.
 final class MeetingWatcher {
     var onChange: ((Bool) -> Void)?
+    /// 麦克风全程没释放（连轴转会议），但窗口指纹变了——判定为换了一场新会，让上层拆分录制。
+    var onMeetingChanged: (() -> Void)?
     private(set) var active = false
 
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
@@ -15,6 +17,10 @@ final class MeetingWatcher {
     private var pollTimer: Timer?
     private var falseStrikes = 0
     private var lastCalibLog = Date.distantPast
+
+    // 当前这场会开始时记下的稳定窗口身份，及"旧窗口消失并出现新窗口"的连续命中次数。
+    private var activeFingerprint: String?
+    private var fingerprintChangeStrikes = 0
 
     private var runningAddr = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
@@ -77,7 +83,8 @@ final class MeetingWatcher {
             detecting = true
             // CGWindowListCopyWindowInfo 是 WindowServer 同步 IPC（可达几十 ms），不占主线程
             detectQueue.async { [weak self] in
-                let present = MeetingDetector.meetingWindowPresent()
+                let identities = MeetingDetector.meetingWindowIdentities()
+                let present = !identities.isEmpty
                 var shouldLog = false
                 DispatchQueue.main.async {
                     guard let self else { return }
@@ -86,6 +93,8 @@ final class MeetingWatcher {
                     if present && self.micRunning() {
                         self.falseStrikes = 0
                         self.active = true
+                        self.activeFingerprint = identities.first
+                        self.fingerprintChangeStrikes = 0
                         self.onChange?(true)
                     } else if Date().timeIntervalSince(self.lastCalibLog) > 30 {
                         self.lastCalibLog = Date()
@@ -99,9 +108,43 @@ final class MeetingWatcher {
         } else {
             if !mic {
                 falseStrikes += 1
-                if falseStrikes >= 2 { falseStrikes = 0; active = false; onChange?(false) }  // ~8s after mic released
+                fingerprintChangeStrikes = 0
+                if falseStrikes >= 2 {   // ~8s after mic released
+                    falseStrikes = 0; active = false; activeFingerprint = nil
+                    onChange?(false)
+                }
             } else {
                 falseStrikes = 0
+                checkForMeetingChange()
+            }
+        }
+    }
+
+    /// 麦克风全程占用，但旧会议窗口已经消失且出现了新的稳定窗口——大概率是连轴转。
+    /// WindowServer 查询放 detectQueue，避免每 4 秒在主线程做同步 IPC。
+    private func checkForMeetingChange() {
+        guard let baseline = activeFingerprint, !detecting else { return }
+        detecting = true
+        detectQueue.async { [weak self] in
+            let identities = MeetingDetector.meetingWindowIdentities()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.detecting = false
+                guard self.active, self.activeFingerprint == baseline else { return }
+                if identities.contains(baseline) {
+                    self.fingerprintChangeStrikes = 0   // 旧窗口仍在；前台窗口/标题变化不算换会
+                    return
+                }
+                guard let current = identities.first else {
+                    self.fingerprintChangeStrikes = 0   // 切换瞬间没有窗口，不计 strike
+                    return
+                }
+                self.fingerprintChangeStrikes += 1
+                if self.fingerprintChangeStrikes >= 2 {
+                    self.fingerprintChangeStrikes = 0
+                    self.activeFingerprint = current
+                    self.onMeetingChanged?()
+                }
             }
         }
     }

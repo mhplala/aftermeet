@@ -100,6 +100,114 @@ enum Refine {
     红线:items 一律字符串数组、用 | 分隔，绝不写 [{...}]。要"综合"成一天的全局视角。只输出 JSON。
     """
 
+    static let mdSummarySystem = """
+    你是给业务负责人写"完整版会议纪要"的资深参谋。读完逐字稿，直接输出一篇 Markdown 格式的纪要正文——不要输出 JSON，不要用代码块包裹，不要加"好的""以下是"这类开场白。
+
+    篇幅 1000~5000 字（中文），按会议信息量决定——内容单薄的会议如实精简（不低于1000字），议题多、信息量大的长会可以写到4000~5000字。核心要求是**详实但不遗漏**：逐字稿里提到的每个议题、每个决策、每个数字都要在纪要里有体现，尤其是长会容易漏掉的后半段；写之前先在心里把逐字稿按主题切几段，逐段确认没有漏。同时要"抽象"——不是逐句转录或流水账，而是把每段内容提炼、综合成有信息密度的叙述，别为了显得详实而堆砌口语原话或无意义的过程细节。
+
+    用 Markdown 二级标题（##）分段，段内以自然语言叙述为主，要点用 - 或数字列表组织，关键结论/数字可以**加粗**。参考结构（按会议实际内容取舍，不必每节都写）：## 概览、## 关键讨论、## 决策、## 待办与分工、## 风险与分歧、## 下一步。
+
+    只依据逐字稿内容，数字/人名/结论优先原样保留；逐字稿是口语 ASR 转写，识别错误和语气词可以顺一下，但不能编造没发生的事。
+    """
+
+    /// 长逐字稿的第一阶段只做事实摘录：每段都保留议题、数字、决策、分歧和待办，供最终归并。
+    /// 限制篇幅，避免分段结果本身再次撑爆最终上下文。
+    private static let mdChunkSystem = """
+    你在为一篇完整版会议纪要做分段事实摘录。只依据给出的这一段逐字稿，用 Markdown 要点完整记录：
+    议题与背景、关键观点及理由、所有数字/专名、明确决策、分歧、风险、待办与负责人。不要写开场白，
+    不要臆测其他片段内容；尽量控制在 1800 个中文字以内，但不能为了短而丢掉硬信息。
+    """
+
+    private static let mdMergeSystem = """
+    把下面多段会议事实摘录合并成一份更紧凑的事实底稿。去掉重复，保留每个议题、数字、决策、分歧、
+    风险和待办；不要写泛泛总结，不要添加原文没有的信息。输出 Markdown，控制在 5000 个中文字以内。
+    """
+
+    /// 完整版 Markdown 纪要 —— 独立于结构化积木的另一种呈现，供直接转发/存档。
+    static func markdownSummary(from transcript: String) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            let raw = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { throw err("逐字稿为空") }
+
+            // 短会直接使用全文；长会先逐段提取事实，再按上下文容量做层级归并，绝不只截前缀。
+            if raw.count <= 24_000 {
+                return try retryText(system: mdSummarySystem,
+                                     user: "会议逐字稿如下：\n\n" + raw,
+                                     maxTokens: 10_000)
+            }
+
+            let sourceChunks = splitByCharacterCount(raw, limit: 12_000)
+            var materials: [String] = []
+            for (i, chunk) in sourceChunks.enumerated() {
+                let note = try retryText(
+                    system: mdChunkSystem,
+                    user: "这是第 \(i + 1)/\(sourceChunks.count) 段逐字稿：\n\n\(chunk)",
+                    maxTokens: 3_000)
+                materials.append(note)
+            }
+
+            // 极长会议可能产生很多段摘录；分组压缩到最终调用能完整接收的规模。
+            while materials.joined(separator: "\n\n").count > 24_000, materials.count > 1 {
+                let groups = groupByCharacterCount(materials, limit: 20_000)
+                var merged: [String] = []
+                for (i, group) in groups.enumerated() {
+                    let body = group.enumerated().map { "### 子段 \($0.offset + 1)\n\($0.element)" }
+                        .joined(separator: "\n\n")
+                    merged.append(try retryText(
+                        system: mdMergeSystem,
+                        user: "这是第 \(i + 1)/\(groups.count) 组事实摘录：\n\n\(body)",
+                        maxTokens: 5_000))
+                }
+                materials = merged
+            }
+
+            let evidence = materials.enumerated().map { "### 逐字稿分段 \($0.offset + 1)\n\($0.element)" }
+                .joined(separator: "\n\n")
+            return try retryText(
+                system: mdSummarySystem,
+                user: "下面是覆盖整场会议、按原始顺序整理的逐段事实摘录。请据此写完整版纪要：\n\n" + evidence,
+                maxTokens: 10_000)
+        }.value
+    }
+
+    private static func retryText(system: String, user: String, maxTokens: Int) throws -> String {
+        var lastError = "生成失败"
+        for _ in 1...2 {
+            do {
+                let text = try chatOnce(system: system, user: user, maxTokens: maxTokens)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { return text }
+                lastError = "生成结果为空"
+            } catch { lastError = (error as NSError).localizedDescription }
+        }
+        throw err(lastError)
+    }
+
+    private static func splitByCharacterCount(_ text: String, limit: Int) -> [String] {
+        guard text.count > limit else { return [text] }
+        var chunks: [String] = []
+        var start = text.startIndex
+        while start < text.endIndex {
+            let end = text.index(start, offsetBy: limit, limitedBy: text.endIndex) ?? text.endIndex
+            chunks.append(String(text[start..<end]))
+            start = end
+        }
+        return chunks
+    }
+
+    private static func groupByCharacterCount(_ items: [String], limit: Int) -> [[String]] {
+        var groups: [[String]] = [], current: [String] = []
+        var count = 0
+        for item in items {
+            if !current.isEmpty, count + item.count > limit {
+                groups.append(current); current = []; count = 0
+            }
+            current.append(item); count += item.count
+        }
+        if !current.isEmpty { groups.append(current) }
+        return groups
+    }
+
     static func note(from transcript: String) async throws -> RefinedNote {
         try await Task.detached(priority: .userInitiated) {
             try runSync(system: system, user: "会议逐字稿如下:\n\n" + transcript)

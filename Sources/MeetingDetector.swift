@@ -25,16 +25,29 @@ enum MeetingDetector {
         return (CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]]) ?? []
     }
 
-    static func meetingWindowPresent() -> Bool {
+    private static func meetingWindows() -> [[String: Any]] {
+        var matches: [[String: Any]] = []
         for w in onScreenWindows() {
             guard (w[kCGWindowLayer as String] as? Int) == 0 else { continue }     // normal windows, not status items
             let owner = (w[kCGWindowOwnerName as String] as? String) ?? ""
             let title = (w[kCGWindowName as String] as? String) ?? ""
-            if meetingApps.contains(where: { owner.localizedCaseInsensitiveContains($0) }) { return true }
+            if meetingApps.contains(where: { owner.localizedCaseInsensitiveContains($0) }) { matches.append(w); continue }
             if multiUseApps.contains(where: { owner.localizedCaseInsensitiveContains($0) }),
-               callHints.contains(where: { title.localizedCaseInsensitiveContains($0) }) { return true }
+               callHints.contains(where: { title.localizedCaseInsensitiveContains($0) }) { matches.append(w) }
         }
-        return false
+        return matches
+    }
+
+    static func meetingWindowPresent() -> Bool { !meetingWindows().isEmpty }
+
+    /// 稳定窗口身份集合（owner + windowNumber，不含会中会变化的标题）。Watcher 会先确认旧窗口
+    /// 是否仍在集合中；打开聊天/设置窗或前后层级变化都不会被误判成换会。
+    static func meetingWindowIdentities() -> [String] {
+        meetingWindows().map { w in
+            let owner = (w[kCGWindowOwnerName as String] as? String) ?? ""
+            let num = (w[kCGWindowNumber as String] as? Int) ?? -1
+            return "\(owner)#\(num)"
+        }
     }
 
     /// Dump candidate windows from meeting-ish apps — read these lines from `~/aftermeet-capture.log`

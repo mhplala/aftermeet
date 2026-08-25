@@ -145,6 +145,11 @@ struct SettingsScreen: View {
     @EnvironmentObject var store: AppStore
     @StateObject private var downloader = ModelDownloader()
     @State private var currentModel = Whisper.model
+    @State private var cloudASRURL = UserDefaults.standard.string(forKey: "cloudASRBaseURL") ?? ""
+    @State private var cloudASREnabled = CloudASRConfig.isEnabled
+    @State private var cloudNeverFallback = CloudASRConfig.neverFallbackToLocal
+    @State private var micMode = AudioInputDevices.mode
+    @State private var inputDevices: [AudioInputDevice] = []
     @State private var localModels: [(path: String, size: String)] = []
     @State private var usage: String = ""
     @State private var usageLoading = false
@@ -183,7 +188,7 @@ struct SettingsScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }
-        .onAppear { scanModels(); fetchUsage() }
+        .onAppear { scanModels(); fetchUsage(); inputDevices = AudioInputDevices.list() }
     }
 
     private func section<C: View>(_ title: String, @ViewBuilder content: @escaping () -> C) -> some View {
@@ -202,7 +207,45 @@ struct SettingsScreen: View {
         let server = ToolPath.resolve("whisper-server")
         let bundled = server?.hasPrefix(Bundle.main.bundlePath) == true
         return VStack(spacing: 0) {
-            statusRow("whisper-server", ok: server != nil,
+            row {
+                Toggle("", isOn: $cloudASREnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .onChange(of: cloudASREnabled) { _, v in UserDefaults.standard.set(v, forKey: "cloudASREnabled") }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("云端转写（火山引擎）").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
+                    Text(cloudASREnabled ? "默认开启，不占本机性能；断网或异常自动退回本地"
+                                          : "已关闭，转写走本机 whisper（音频不出网，但更吃性能）")
+                        .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                }
+                Spacer()
+                Circle().fill(CloudASRConfig.isConfigured ? Theme.green500 : Theme.inkMuted).frame(width: 7, height: 7)
+            }
+            Hairline()
+            row {
+                Text("代理地址").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
+                TextField(CloudASRConfig.defaultBaseURL, text: $cloudASRURL)
+                    .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
+                    .autocorrectionDisabled()
+                    .onChange(of: cloudASRURL) { _, v in
+                        UserDefaults.standard.set(v.trimmingCharacters(in: .whitespaces), forKey: "cloudASRBaseURL")
+                    }
+                Spacer()
+                Text("留空 = 用内置地址").font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+            }
+            Hairline()
+            row {
+                Toggle("", isOn: $cloudNeverFallback).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .onChange(of: cloudNeverFallback) { _, v in UserDefaults.standard.set(v, forKey: "cloudASRNeverFallback") }
+                    .disabled(!cloudASREnabled)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("断线时死磕云端，不退回本地").font(Theme.ui(13)).foregroundColor(cloudASREnabled ? Theme.inkPrimary : Theme.inkMuted)
+                    Text(cloudNeverFallback ? "一直退避重连直到恢复；重连期间音频照常录，但这段会缺字"
+                                            : "重连 5 次仍失败才切本地 whisper（约 30 秒）")
+                        .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                }
+                Spacer()
+            }
+            Hairline()
+            statusRow("本地 whisper-server（离线兜底）", ok: server != nil,
                       okText: bundled ? "内置" : (server ?? "已安装"),
                       failText: "未找到（重新安装应用，或 brew install whisper-cpp）")
         }
@@ -335,7 +378,34 @@ struct SettingsScreen: View {
                 }
                 Spacer()
             }
+            Hairline()
+            row {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("录音麦克风").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
+                    Text(micHint).font(Theme.mono(9.5)).foregroundColor(micWarns ? Theme.warn500 : Theme.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Picker("", selection: $micMode) {
+                    Text("自动（避开蓝牙）").tag("auto")
+                    Text("跟随系统默认").tag("system")
+                    ForEach(inputDevices) { d in
+                        Text(d.name + (d.isBluetooth ? "（蓝牙）" : "")).tag(d.id)
+                    }
+                }
+                .labelsHidden().frame(width: 210)
+                .onChange(of: micMode) { _, v in UserDefaults.standard.set(v, forKey: AudioInputDevices.modeKey) }
+            }
         }
+    }
+
+    /// 蓝牙耳机做麦克风会被 macOS 从 A2DP 拽到 HFP：音质掉到电话级，且 AGC 把电平顶到削顶，
+    /// 直接拖垮识别。这里如实告诉用户当前选择会不会触发。
+    private var micWarns: Bool { AudioInputDevices.willForceBluetoothHFP() }
+    private var micHint: String {
+        micWarns
+            ? "当前会占用蓝牙耳机麦克风：耳机将切到 HFP，音质降为电话级且易削顶，建议改用内置麦克风"
+            : "避免占用蓝牙耳机麦克风，耳机保持音乐音质（A2DP），你的声音走内置麦克风"
     }
 
     // MARK: 飞书

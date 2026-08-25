@@ -1,0 +1,68 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "aftermeet-asr-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "env": {
+    "staging": {
+      "name": "aftermeet-asr-proxy-staging",
+      "secrets": {
+        "required": ["VOLCENGINE_API_KEY"]
+      },
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "VOLCENGINE_ASR_RESOURCE_ID": "volc.seedasr.sauc.duration",
+        "APP_ID": "siku-app-ea047a048adabb1108df95b63757370a"
+      },
+      "ratelimits": [
+        {
+          "name": "ASR_DEVICE_RATE_LIMITER",
+          "namespace_id": "21001",
+          "simple": { "limit": 12, "period": 60 }
+        },
+        {
+          "name": "ASR_IP_RATE_LIMITER",
+          "namespace_id": "21002",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "ASR_GLOBAL_RATE_LIMITER",
+          "namespace_id": "21003",
+          "simple": { "limit": 200, "period": 60 }
+        }
+      ]
+    },
+    "production": {
+      "name": "aftermeet-asr-proxy-production",
+      "secrets": {
+        "required": ["VOLCENGINE_API_KEY"]
+      },
+      "vars": {
+        "ENVIRONMENT": "production",
+        "VOLCENGINE_ASR_RESOURCE_ID": "volc.seedasr.sauc.duration",
+        "APP_ID": "siku-app-ea047a048adabb1108df95b63757370a"
+      },
+      "ratelimits": [
+        {
+          "name": "ASR_DEVICE_RATE_LIMITER",
+          "namespace_id": "22001",
+          "simple": { "limit": 12, "period": 60 }
+        },
+        {
+          "name": "ASR_IP_RATE_LIMITER",
+          "namespace_id": "22002",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "ASR_GLOBAL_RATE_LIMITER",
+          "namespace_id": "22003",
+          "simple": { "limit": 200, "period": 60 }
+        }
+      ]
+    }
+  }
+}
