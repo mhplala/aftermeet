@@ -15,6 +15,7 @@ struct TopBar: View {
     var body: some View {
         HStack(spacing: 14) {
             RecStrip()
+            RecControls()
             search
                 .frame(maxWidth: 330)
             Spacer()

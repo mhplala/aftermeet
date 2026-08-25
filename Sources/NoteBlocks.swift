@@ -265,3 +265,59 @@ private struct NextAgendaBlock: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 }
+
+/// 完整版纪要的轻量 Markdown 渲染 —— 逐行分类（标题/列表/正文），行内 **加粗**/_斜体_ 交给
+/// Text(LocalizedStringKey:) 处理。没有引入三方 Markdown 库：内容格式由 Refine.mdSummarySystem
+/// 约束（只用 #/##/-/数字列表/**加粗**），不需要表格、代码块这类更复杂的语法。
+struct MarkdownDocView: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in row(for: line) }
+        }
+    }
+
+    /// 折叠连续空行，避免段落间距被重复的空行撑开
+    private var lines: [String] {
+        var out: [String] = []
+        for raw in text.components(separatedBy: "\n") {
+            let l = raw.trimmingCharacters(in: .whitespaces)
+            if l.isEmpty, out.last?.isEmpty == true { continue }
+            out.append(l)
+        }
+        return out
+    }
+
+    @ViewBuilder private func row(for line: String) -> some View {
+        if line.isEmpty {
+            Color.clear.frame(height: 4)
+        } else if line.hasPrefix("### ") {
+            Text(LocalizedStringKey(String(line.dropFirst(4))))
+                .font(Theme.ui(13.5, .semibold)).foregroundColor(Theme.inkPrimary)
+        } else if line.hasPrefix("## ") {
+            Text(LocalizedStringKey(String(line.dropFirst(3))))
+                .font(Theme.ui(15.5, .bold)).foregroundColor(Theme.inkPrimary)
+                .padding(.top, 6)
+        } else if line.hasPrefix("# ") {
+            Text(LocalizedStringKey(String(line.dropFirst(2))))
+                .font(Theme.ui(18, .bold)).foregroundColor(Theme.inkPrimary)
+        } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+            HStack(alignment: .top, spacing: 7) {
+                Text("·").font(Theme.ui(13.5)).foregroundColor(Theme.inkTertiary)
+                Text(LocalizedStringKey(String(line.dropFirst(2))))
+                    .font(Theme.ui(13.5)).foregroundColor(Theme.inkPrimary).lineSpacing(4)
+            }
+        } else if let range = line.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+            HStack(alignment: .top, spacing: 7) {
+                Text(String(line[..<range.upperBound]).trimmingCharacters(in: .whitespaces))
+                    .font(Theme.ui(13.5)).foregroundColor(Theme.inkTertiary)
+                Text(LocalizedStringKey(String(line[range.upperBound...])))
+                    .font(Theme.ui(13.5)).foregroundColor(Theme.inkPrimary).lineSpacing(4)
+            }
+        } else {
+            Text(LocalizedStringKey(line))
+                .font(Theme.ui(13.5)).foregroundColor(Theme.inkPrimary).lineSpacing(4)
+        }
+    }
+}

@@ -197,6 +197,11 @@ final class AppStore: ObservableObject {
     @Published var qaThreads: [String: [QATurn]] = QAStore.load()
     @Published var qaPending: Set<String> = []
 
+    // 完整版 Markdown 纪要 — 每场会懒生成一次并缓存
+    @Published var mdSummaries: [String: String] = MDSummaryStore.load()
+    @Published var mdSummaryPending: Set<String> = []
+    @Published var mdSummaryErrors: [String: String] = [:]
+
     // Live capture engine (app-wide, so auto-detect can start it from any screen).
     let capture = CaptureService()
     let watcher = MeetingWatcher()
@@ -343,7 +348,8 @@ final class AppStore: ObservableObject {
     }
 
     /// A live-captured transcript came back — refine it, then drop the result in as a real meeting.
-    func ingestLive(transcript: String, durationSec: Int) {
+    func ingestLive(transcript: String, durationSec: Int,
+                    capturedName: String, transcriptPath: String) {
         refining = true
         let stopped = Date()                       // 停录时刻（提炼要几十秒，别把时间戳推迟）
         Task {
@@ -355,8 +361,11 @@ final class AppStore: ObservableObject {
                 refineError = error.localizedDescription
                 note = .failed(reason: refineError!)
             }
-            let userName = capture.meetingName.trimmingCharacters(in: .whitespaces)
-            if userName.isEmpty, refineError == nil { capture.setMeetingName(note.title) }   // 豆包 names the file by content
+            // 名称与文件路径来自 stop 前的会话快照。自动连录时，capture 此刻可能已经属于下一场。
+            let userName = capturedName.trimmingCharacters(in: .whitespaces)
+            if userName.isEmpty, refineError == nil {
+                capture.setStoredMeetingName(note.title, transcriptPath: transcriptPath)
+            }
             let now = stopped
             let title = userName.isEmpty ? note.title : userName
             let storedID = "live-\(Int(now.timeIntervalSince1970))"
@@ -460,16 +469,31 @@ final class AppStore: ObservableObject {
 
     /// 启动自动恢复：近 7 天的孤儿录音（有转写、没会议）默认补生成纪要，不用用户动手。
     /// 更早的陈年档案留给列表里的手动按钮，避免首次升级时批量轰炸。
+    /// 转写内容指纹：去掉所有空白后取前若干字。用来判断"这份转写是不是已经入过库"。
+    ///
+    /// 原先只靠时间区间重叠判断，但 TranscriptFile 的 start 来自**文件名字符串**（时区无关），
+    /// end 来自**文件 mtime**（绝对时刻）。跨时区旅行后（如 UTC+10 → UTC+8），旧文件的
+    /// 文件名时间会被按新时区重新解读，与 mtime 错开数小时、区间甚至倒挂，导致同一批录音
+    /// 每次启动都被重新判成孤儿、反复补生成。内容指纹与时间无关，不受影响。
+    /// 纯字符串计算、不碰任何状态，所以标 nonisolated，后台队列也能直接算。
+    nonisolated static func transcriptFingerprint(_ s: String) -> String {
+        String(s.components(separatedBy: .whitespacesAndNewlines).joined().prefix(160))
+    }
+
     func autoRecoverOrphans() {
         guard !Self.demoMode else { return }
         Task {
             let files = await Task.detached(priority: .utility) { TranscriptArchiveView.loadFiles() }.value
+            let ingested = await Task.detached(priority: .utility) {
+                Set(LiveStore.load().map { Self.transcriptFingerprint($0.transcript) })
+            }.value
             let now = Date()
             let orphans = files.filter { f in
                 f.chars >= 300                                            // 噪音碎片不成会
                 && f.end > now.addingTimeInterval(-7 * 86400)             // 只自动救近 7 天
                 && f.end < now.addingTimeInterval(-120)                   // 正在写入的（录音中）不碰
-                && !hasLiveMeeting(overlapping: f.start, f.end)
+                && !ingested.contains(Self.transcriptFingerprint(f.body)) // 内容已入库 → 不是孤儿
+                && !hasLiveMeeting(overlapping: f.start, f.end)           // 时间重叠仍作为兜底
             }
             guard !orphans.isEmpty else { return }
             showToast("发现 \(orphans.count) 场未生成纪要的录音，正在补生成…")
@@ -513,6 +537,7 @@ final class AppStore: ObservableObject {
         watching = true
         capture.requestAuth()
         watcher.onChange = { [weak self] active in self?.handleMeeting(active) }
+        watcher.onMeetingChanged = { [weak self] in self?.handleMeetingChanged() }
         watcher.start()
     }
 
@@ -536,11 +561,18 @@ final class AppStore: ObservableObject {
         if capture.isCapturing { endCapture() } else { beginCapture(openPanel: true) }
     }
 
+    /// 顶栏「暂停/继续」——录制中才有意义
+    func togglePause() {
+        guard capture.isCapturing else { return }
+        capture.togglePause()
+        showToast(capture.isPaused ? "已暂停，音频不再录入" : "已继续录制")
+    }
+
     /// 幂等 start：面板按钮 / 菜单栏 / 自动检测同拍触发也只起一条流。
     private func beginCapture(openPanel: Bool) {
         guard !capture.isCapturing, !startInFlight, !stopInFlight else { return }
-        guard Whisper.available() else {
-            showToast(Whisper.serverAvailable ? "缺少转写模型，请在设置中下载" : "转写引擎异常，请重新安装应用")
+        guard CloudASRConfig.isConfigured || Whisper.available() else {
+            showToast(Whisper.serverAvailable ? "未配置云端转写，也缺少本地转写模型，请在设置中处理" : "转写引擎异常，请重新安装应用")
             showRecPanel = true          // 面板里有黄条和「去设置」
             return
         }
@@ -557,12 +589,34 @@ final class AppStore: ObservableObject {
     private func endCapture() {
         guard capture.isCapturing, !stopInFlight else { return }
         stopInFlight = true
+        let capturedName = capture.meetingName
+        let transcriptPath = capture.savedPath
         Task {
             let text = await capture.stop()
             stopInFlight = false
             if text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
-                ingestLive(transcript: text, durationSec: capture.elapsed)
+                ingestLive(transcript: text, durationSec: capture.elapsed,
+                           capturedName: capturedName, transcriptPath: transcriptPath)
             }
+        }
+    }
+
+    /// 麦克风全程没释放、但 watcher 判断换了场会（连轴转）——收掉当前这场，立刻续上新的一场。
+    /// 和 endCapture 不一样的地方只有一处：stop 完之后紧接着 beginCapture，而不是停在那不动。
+    private func handleMeetingChanged() {
+        guard capture.isCapturing, !stopInFlight else { return }
+        stopInFlight = true
+        let capturedName = capture.meetingName
+        let transcriptPath = capture.savedPath
+        showToast("检测到新会议，已保存上一场并开始新录制")
+        Task {
+            let text = await capture.stop()
+            stopInFlight = false
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
+                ingestLive(transcript: text, durationSec: capture.elapsed,
+                           capturedName: capturedName, transcriptPath: transcriptPath)
+            }
+            beginCapture(openPanel: false)
         }
     }
 
@@ -648,6 +702,33 @@ final class AppStore: ObservableObject {
             }
             qaPending.remove(id)
         }
+    }
+
+    /// 懒生成当前会议的完整版 Markdown 纪要；已有缓存或正在生成则不重复调用。
+    func generateMarkdownSummary() {
+        let id = current.id
+        guard mdSummaries[id] == nil, !mdSummaryPending.contains(id) else { return }
+        let transcript = current.rawTranscript
+        mdSummaryPending.insert(id)
+        mdSummaryErrors[id] = nil
+        Task {
+            do {
+                let text = try await Refine.markdownSummary(from: transcript)
+                mdSummaries[id] = text
+                MDSummaryStore.save(id, text)
+            } catch {
+                mdSummaryErrors[id] = error.localizedDescription
+            }
+            mdSummaryPending.remove(id)
+        }
+    }
+
+    /// 清掉缓存（内存 + DB 下次保存会覆盖旧行）重新调一次，用于 prompt 改了或用户手动要求刷新
+    func regenerateMarkdownSummary() {
+        let id = current.id
+        mdSummaries[id] = nil
+        mdSummaryErrors[id] = nil
+        generateMarkdownSummary()
     }
 
     // MARK: - navigation（带历史栈：返回永远回「你来的地方」）

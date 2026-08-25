@@ -57,7 +57,11 @@ struct RecStrip: View {
         case .detected:
             PulsingDot(color: Theme.blue500)
         case .recording:
-            PulsingDot(color: Theme.danger500)
+            if cap.isPaused {
+                Circle().fill(Theme.warn500).frame(width: 8, height: 8)
+            } else {
+                PulsingDot(color: Theme.danger500)
+            }
         case .refining:
             ProgressView().controlSize(.mini)
         case .done:
@@ -67,15 +71,16 @@ struct RecStrip: View {
 
     @ViewBuilder private var label: some View {
         switch phase {
+        // 只表状态、不重复“录制”动作——动作在右边的 RecControls 里，两者不能都叫“录制”
         case .idle:
-            Text("录制").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkSecondary)
+            Text("空闲").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkSecondary)
         case .detected:
-            Text("检测到会议 · 点击开始记录").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.blue700)
+            Text("检测到会议").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.blue700)
         case .recording:
             HStack(spacing: 7) {
-                Text("录制中").font(Theme.ui(12.5, .semibold))
+                Text(cap.isPaused ? "已暂停" : "录制中").font(Theme.ui(12.5, .semibold))
                 Text(timeString).font(Theme.mono(12, .medium))
-            }.foregroundColor(Theme.danger500)
+            }.foregroundColor(cap.isPaused ? Theme.warn500 : Theme.danger500)
         case .refining:
             Text("整理中…").font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkSecondary)
         case .done:
@@ -87,7 +92,7 @@ struct RecStrip: View {
         switch phase {
         case .idle, .refining: return AnyShapeStyle(Theme.glassFill)
         case .detected:        return AnyShapeStyle(Theme.blue50)
-        case .recording:       return AnyShapeStyle(Theme.danger50)
+        case .recording:       return AnyShapeStyle(cap.isPaused ? Theme.warn50 : Theme.danger50)
         case .done:            return AnyShapeStyle(Theme.inkGrad)
         }
     }
@@ -96,7 +101,7 @@ struct RecStrip: View {
         switch phase {
         case .idle, .refining: return Theme.borderDefault
         case .detected:        return Theme.blue500.opacity(0.4)
-        case .recording:       return Theme.danger500.opacity(0.4)
+        case .recording:       return (cap.isPaused ? Theme.warn500 : Theme.danger500).opacity(0.4)
         case .done:            return .clear
         }
     }
@@ -105,9 +110,53 @@ struct RecStrip: View {
         switch phase {
         case .idle, .refining: return Color.black.opacity(0.14)
         case .detected:        return Theme.blue500.opacity(0.22)
-        case .recording:       return Theme.danger500.opacity(0.30)
+        case .recording:       return (cap.isPaused ? Theme.warn500 : Theme.danger500).opacity(0.30)
         case .done:            return Color.black.opacity(0.30)
         }
+    }
+}
+
+/// 顶栏常驻操作区：录制 / 暂停 / 字幕窗。
+/// 之前这些只藏在状态药丸的弹层里，开会时每次都要先点开弹层——高频操作不该多一跳。
+struct RecControls: View {
+    @EnvironmentObject var store: AppStore
+    @EnvironmentObject var cap: CaptureService
+    @ObservedObject private var captionCtl = LiveCaptionWindowController.shared
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if cap.isCapturing {
+                pill(cap.isPaused ? "play.fill" : "pause.fill",
+                     cap.isPaused ? "继续" : "暂停",
+                     tint: cap.isPaused ? Theme.accent : Theme.inkSecondary) {
+                    store.togglePause()
+                }
+                pill("stop.fill", "停止", tint: Theme.danger500) { store.toggleCapture() }
+            } else {
+                pill("record.circle", "录制", tint: Theme.inkSecondary) { store.toggleCapture() }
+            }
+            pill("captions.bubble", captionCtl.isOpen ? "字幕开" : "字幕",
+                 tint: captionCtl.isOpen ? Theme.blue700 : Theme.inkSecondary) {
+                LiveCaptionWindowController.shared.toggle(capture: cap)
+            }
+        }
+    }
+
+    private func pill(_ icon: String, _ label: String, tint: Color,
+                      _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 10.5, weight: .semibold))
+                Text(label).font(Theme.ui(11.5, .semibold))
+            }
+            .foregroundColor(tint)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Theme.glassFill)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -128,32 +177,59 @@ struct PulsingDot: View {
 struct RecPanel: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var cap: CaptureService
+    @ObservedObject private var captionCtl = LiveCaptionWindowController.shared
     @State private var nameEdit = ""
 
-    private var engineReady: Bool { Whisper.available() }
+    private var engineReady: Bool { CloudASRConfig.isConfigured || Whisper.available() }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("会中 · 本地实时转写")
-                .font(Theme.mono(10, .semibold)).tracking(1.0)
-                .foregroundColor(Theme.inkMuted).textCase(.uppercase)
+            HStack(spacing: 8) {
+                Text("会中 · 实时转写")
+                    .font(Theme.mono(10, .semibold)).tracking(1.0)
+                    .foregroundColor(Theme.inkMuted).textCase(.uppercase)
+                if cap.isCapturing { engineTag }
+                Spacer()
+                Button {
+                    LiveCaptionWindowController.shared.toggle(capture: cap)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "captions.bubble").font(.system(size: 10))
+                        Text(captionCtl.isOpen ? "关闭字幕窗" : "字幕窗")
+                            .font(Theme.ui(11, .semibold))
+                    }
+                    .foregroundColor(Theme.inkSecondary)
+                    .padding(.horizontal, 9).padding(.vertical, 3)
+                    .background(Theme.white).clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                    .contentShape(Capsule())
+                }.buttonStyle(.plain)
+            }
 
             if !engineReady { missingEngineRow }
             nameRow
             if !cap.calendarSuggestion.isEmpty && nameEdit.isEmpty { suggestionRow }
             autoStartRow
 
-            if cap.isCapturing || !cap.liveText.isEmpty { liveBox }
+            if cap.isCapturing || !cap.liveLines.isEmpty { liveBox }
 
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cap.isCapturing ? "录制中 \(timeString)" : (store.refining ? "整理中…" : "未开始"))
                         .font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary)
-                    Text("音频仅在本机处理 · 请确保参会者知情")
+                    Text(cap.isCapturing
+                         ? (cap.usingCloud ? "音频经云端处理 · 请确保参会者知情" : "音频仅在本机处理 · 请确保参会者知情")
+                         : (CloudASRConfig.isConfigured ? "默认走云端转写 · 请确保参会者知情" : "音频仅在本机处理 · 请确保参会者知情"))
                         .font(Theme.mono(9.5)).foregroundColor(Theme.inkTertiary)
                 }
                 Spacer()
                 controlButton
+            }
+            // 重连中：音频仍在落盘，只是这段暂时没有文字，得让用户看见而不是干等
+            if cap.isCapturing, cap.cloudReconnecting {
+                Text(cap.status + "（音频仍在录，这段稍后可能缺字）")
+                    .font(Theme.ui(11)).foregroundColor(Theme.warn500)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             // 启动失败的原因（缺权限/引擎中断）原来只写进这个字段但没显示 —— 必须可见
             if !cap.isCapturing, statusIsError {
@@ -176,7 +252,7 @@ struct RecPanel: View {
         cap.status.contains("权限") || cap.status.contains("未找到") || cap.status.contains("中断")
     }
 
-    /// 转写引擎或模型缺失：录制无法开始，给出去处
+    /// 云端未配置、本地引擎又缺失/缺模型：录制无法开始，给出去处
     private var missingEngineRow: some View {
         HStack(spacing: 9) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -184,7 +260,7 @@ struct RecPanel: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(Whisper.serverAvailable ? "缺少转写模型" : "转写引擎异常")
                     .font(Theme.ui(12, .semibold)).foregroundColor(Theme.inkPrimary)
-                Text(Whisper.serverAvailable ? "下载模型后即可录制" : "重新安装应用，或 brew install whisper-cpp")
+                Text(Whisper.serverAvailable ? "配置云端转写，或下载本地模型后即可录制" : "配置云端转写，或重新安装应用 / brew install whisper-cpp")
                     .font(Theme.mono(9.5)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()
@@ -201,6 +277,19 @@ struct RecPanel: View {
         .padding(.horizontal, 11).padding(.vertical, 9)
         .background(Theme.warn50)
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+    }
+
+    /// 录制中才有意义——启动前不知道最终走哪条路（云端可能中途断线重连，甚至退回本地）
+    private var engineTag: some View {
+        let label = cap.cloudReconnecting ? "重连中" : (cap.usingCloud ? "云端" : "本地")
+        let fg = cap.cloudReconnecting ? Theme.warn500 : (cap.usingCloud ? Theme.blue700 : Theme.inkSecondary)
+        let bg = cap.cloudReconnecting ? Theme.warn50 : (cap.usingCloud ? Theme.blue50 : Theme.glassFill)
+        return Text(label)
+            .font(Theme.mono(9, .semibold)).tracking(0.4)
+            .foregroundColor(fg)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(bg)
+            .clipShape(Capsule())
     }
 
     private var nameRow: some View {
@@ -255,25 +344,48 @@ struct RecPanel: View {
         }
     }
 
+    /// 实时预览：按分句成行，最后一句（服务端还在改写的）用浅色标出，让人一眼看出
+    /// "哪些已经定了、哪句还在成形"。只渲染 CaptureService 已经封顶的最近若干条，
+    /// 不拿整篇几万字去做布局测量（那会卡死主线程）。
     private var liveBox: some View {
-        // 实时预览只渲染尾部：录久了 liveText 累积几万字，整段塞进带 fixedSize 的 Text
-        // 会全量布局测量卡死主线程（打开面板转菊花）。用户只需看最近说了什么。
-        let full = cap.liveText
-        let tail = full.count > 1600 ? "……（上文从略）\n" + String(full.suffix(1600)) : full
+        let lines = cap.liveLines
+        let pending = cap.pendingLine
+        let isEmpty = lines.isEmpty && pending.isEmpty
         return ScrollViewReader { proxy in
             ScrollView {
-                Text(full.isEmpty ? "正在聆听…" : tail)
-                    .font(Theme.ui(12.5))
-                    .foregroundColor(full.isEmpty ? Theme.inkTertiary : Theme.inkPrimary.opacity(0.88))
-                    .lineSpacing(5).frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                if isEmpty {
+                    HStack(spacing: 6) {
+                        if cap.isCapturing { PulsingDot(color: Theme.inkMuted) }
+                        Text(cap.isCapturing ? "正在聆听…" : "尚无内容")
+                            .font(Theme.ui(12.5)).foregroundColor(Theme.inkTertiary)
+                        Spacer()
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(Theme.ui(12.5))
+                                .foregroundColor(Theme.inkPrimary.opacity(0.88))
+                                .lineSpacing(4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if !pending.isEmpty {
+                            Text(pending)
+                                .font(Theme.ui(12.5))
+                                .foregroundColor(Theme.inkTertiary)   // 还会变，视觉上弱化
+                                .lineSpacing(4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
                 Color.clear.frame(height: 1).id("bottom")
             }
-            .frame(height: 120)
-            // 用 count 触发（廉价 Int 比较），不拿几万字整串做 diff
-            .onChange(of: full.count) { _, _ in
-                proxy.scrollTo("bottom", anchor: .bottom)
-            }
+            .frame(height: 168)
+            // 用廉价的计数/长度变化触发，不拿长串做 diff
+            .onChange(of: lines.count) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: pending.count) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
         }
         .padding(10)
         .background(Theme.warmWhite)

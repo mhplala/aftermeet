@@ -3,6 +3,12 @@ import SwiftUI
 struct DetailScreen: View {
     @EnvironmentObject var store: AppStore
     @State private var question = ""
+    @State private var noteTab: NoteTab = .structured
+
+    private enum NoteTab: String, CaseIterable, Identifiable {
+        case structured = "结构化纪要", markdown = "完整版纪要"
+        var id: String { rawValue }
+    }
 
     private var m: MeetingVM { store.current }
     private var decisions: [Decision] { m.decisions }
@@ -21,7 +27,8 @@ struct DetailScreen: View {
                     if let failure = m.displayBlocks.first(where: { $0.type == "refineFailed" }) {
                         regenBanner(failure.text ?? "")
                     }
-                    NoteBlocksView(blocks: m.displayBlocks).padding(.top, 4)
+                    noteTabPicker
+                    noteTabContent
                     todosSection
                     transcriptSection
                     qaSection
@@ -34,6 +41,76 @@ struct DetailScreen: View {
             actionBar
         }
         .task(id: m.id) { store.checkCalendarName(for: m) }
+    }
+
+    private var noteTabPicker: some View {
+        Picker("", selection: $noteTab) {
+            ForEach(NoteTab.allCases) { t in Text(t.rawValue).tag(t) }
+        }
+        .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder private var noteTabContent: some View {
+        switch noteTab {
+        case .structured:
+            NoteBlocksView(blocks: m.displayBlocks).padding(.top, 4)
+        case .markdown:
+            markdownSummarySection.padding(.top, 4)
+        }
+    }
+
+    private var markdownSummarySection: some View {
+        Group {
+            if let text = store.mdSummaries[m.id] {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Spacer()
+                        Button {
+                            store.regenerateMarkdownSummary()
+                        } label: {
+                            Text("重新生成").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                                .padding(.horizontal, 11).padding(.vertical, 5)
+                                .background(Theme.white).clipShape(Capsule())
+                                .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                                .contentShape(Capsule())
+                        }.buttonStyle(.plain)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(text, forType: .string)
+                            store.showToast("已复制 Markdown")
+                        } label: {
+                            Text("复制 Markdown").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                                .padding(.horizontal, 11).padding(.vertical, 5)
+                                .background(Theme.white).clipShape(Capsule())
+                                .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                                .contentShape(Capsule())
+                        }.buttonStyle(.plain)
+                    }
+                    MarkdownDocView(text: text).textSelection(.enabled)
+                }
+            } else if let error = store.mdSummaryErrors[m.id] {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("生成失败：\(error)").font(Theme.ui(12)).foregroundColor(Theme.danger500)
+                    Button {
+                        store.generateMarkdownSummary()
+                    } label: {
+                        Text("重试").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                            .padding(.horizontal, 11).padding(.vertical, 5)
+                            .background(Theme.white).clipShape(Capsule())
+                            .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("生成完整版纪要中…").font(Theme.ui(12)).foregroundColor(Theme.inkTertiary)
+                }
+                .padding(.vertical, 24)
+                .onAppear { store.generateMarkdownSummary() }
+            }
+        }
     }
 
     /// 时间戳 × 日历命中了别的名字 → 给一条可采用的改名建议

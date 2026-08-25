@@ -69,6 +69,9 @@ struct MenuBarPanel: View {
 
             Divider()
 
+            row(LiveCaptionWindowController.shared.isOpen ? "关闭实时字幕窗" : "打开实时字幕窗", "captions.bubble") {
+                LiveCaptionWindowController.shared.toggle(capture: capture)
+            }
             row("同步飞书会议", "arrow.triangle.2.circlepath") { store.syncNow() }
             row("打开主窗口", "macwindow") { activateMainWindow() }
             row("退出 Aftermeet", "power") { NSApplication.shared.terminate(nil) }

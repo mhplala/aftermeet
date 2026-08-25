@@ -45,6 +45,7 @@ final class DB {
                 """)
             execLocked("CREATE TABLE IF NOT EXISTS daily(day TEXT PRIMARY KEY, blocks TEXT NOT NULL)")
             execLocked("CREATE TABLE IF NOT EXISTS qa(meeting_id TEXT PRIMARY KEY, turns TEXT NOT NULL)")
+            execLocked("CREATE TABLE IF NOT EXISTS md_summary(meeting_id TEXT PRIMARY KEY, markdown TEXT NOT NULL)")
             execLocked("CREATE TABLE IF NOT EXISTS task_links(key TEXT PRIMARY KEY, guid TEXT NOT NULL)")
             execLocked("CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         }

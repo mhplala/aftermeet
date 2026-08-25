@@ -206,6 +206,16 @@ enum QAStore {
     }
 }
 
+/// 完整版 Markdown 纪要 — 每场会一份，生成一次缓存，不重复调用 LLM。
+enum MDSummaryStore {
+    static func load() -> [String: String] {
+        DB.shared.dictAll("md_summary", keyCol: "meeting_id", valCol: "markdown")
+    }
+    static func save(_ meetingID: String, _ markdown: String) {
+        DB.shared.setRow("md_summary", keyCol: "meeting_id", valCol: "markdown", key: meetingID, value: markdown)
+    }
+}
+
 // MARK: - View model the detail / home screens render (real or sample)
 
 struct MeetingVM: Identifiable {
