@@ -2,3 +2,18 @@
 .DS_Store
 *.xcodeproj
 dist/
+
+# 逐字稿批量去重/迁移任务的中间产物（2026-08-19 那次清洗留下的）。
+# 全部可从 ~/Library/Application Support/AfterMeet/transcripts/ 重新生成，
+# 不是源码；留在仓库里只会让每次 PR 都虚报数万行改动。
+dedup/
+dedup_sizes.json
+manifest.json
+plan*.json
+batches*.json
+status.json
+wf_*.json
+workflow_args.json
+make_plan*.py
+verify_staging.py
+会议纪要-staging/
