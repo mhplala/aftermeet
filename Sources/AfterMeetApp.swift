@@ -6,6 +6,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let ap = UserDefaults.standard.string(forKey: "appearance") {
             NSApp.appearance = NSAppearance(named: ap == "dark" ? .darkAqua : .aqua)
         }
+        if UserDefaults.standard.bool(forKey: "migrationCheck") {
+            let diagnostics = KnowledgeStore.shared.diagnostics()
+            if let data = try? JSONEncoder().encode(diagnostics) {
+                FileHandle.standardOutput.write(data)
+                FileHandle.standardOutput.write(Data("\n".utf8))
+            }
+            NSApp.terminate(nil)
+            return
+        }
         // Dev: `-obshot <dir>` 把引导五步离屏渲染成 PNG 后退出（UI 快照验证，不抢焦点）
         guard let dir = UserDefaults.standard.string(forKey: "obshot") else { return }
         NSLog("obshot: rendering to %@", dir)

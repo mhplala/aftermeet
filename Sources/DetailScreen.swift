@@ -24,10 +24,12 @@ struct DetailScreen: View {
                     titleRow
                     metaRow
                     if let suggestion = store.calendarSuggestions[m.id] { renameChip(suggestion) }
-                    if let failure = m.displayBlocks.first(where: { $0.type == "refineFailed" }) {
+                    if m.displayBlocks.contains(where: { $0.type == "refinePending" }) {
+                        refinePendingBanner
+                    } else if let failure = m.displayBlocks.first(where: { $0.type == "refineFailed" }) {
                         regenBanner(failure.text ?? "")
                     }
-                    noteTabPicker
+                    noteToolbar
                     noteTabContent
                     todosSection
                     transcriptSection
@@ -43,12 +45,75 @@ struct DetailScreen: View {
         .task(id: m.id) { store.checkCalendarName(for: m) }
     }
 
-    private var noteTabPicker: some View {
-        Picker("", selection: $noteTab) {
-            ForEach(NoteTab.allCases) { t in Text(t.rawValue).tag(t) }
+    private var noteToolbar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 3) {
+                ForEach(NoteTab.allCases) { tab in
+                    let selected = noteTab == tab
+                    Button {
+                        withAnimation(.easeOut(duration: 0.16)) { noteTab = tab }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: tab == .structured ? "square.grid.2x2" : "doc.text")
+                                .font(.system(size: 11.5, weight: .medium))
+                            Text(tab.rawValue).font(Theme.ui(12.5, selected ? .semibold : .medium))
+                        }
+                        .foregroundColor(selected ? Theme.inkPrimary : Theme.inkSecondary)
+                        .frame(minWidth: 116)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(selected ? Theme.white : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
+                        .overlay {
+                            if selected {
+                                RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous)
+                                    .strokeBorder(Theme.borderWhisper, lineWidth: 1)
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .shadow(color: selected ? Color.black.opacity(0.07) : .clear,
+                            radius: selected ? 4 : 0, x: 0, y: selected ? 2 : 0)
+                    .accessibilityLabel(tab.rawValue)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            .padding(3)
+            .background(Theme.warmWhite2)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
+                .strokeBorder(Theme.borderWhisper, lineWidth: 1))
+
+            Spacer()
+
+            if noteTab == .markdown, let text = store.mdSummaries[m.id] {
+                noteActionButton("重新生成", icon: "arrow.clockwise") {
+                    store.regenerateMarkdownSummary()
+                }
+                noteActionButton("复制 Markdown", icon: "doc.on.doc") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    store.showToast("已复制 Markdown")
+                }
+            }
         }
-        .pickerStyle(.segmented).labelsHidden().frame(width: 220)
-        .padding(.top, 4)
+        .padding(.top, 5).padding(.bottom, 3)
+    }
+
+    private func noteActionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 10.5, weight: .semibold))
+                Text(title).font(Theme.ui(11.5, .semibold))
+            }
+            .foregroundColor(Theme.inkSecondary)
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Theme.white)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var noteTabContent: some View {
@@ -63,32 +128,14 @@ struct DetailScreen: View {
     private var markdownSummarySection: some View {
         Group {
             if let text = store.mdSummaries[m.id] {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        Spacer()
-                        Button {
-                            store.regenerateMarkdownSummary()
-                        } label: {
-                            Text("重新生成").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
-                                .padding(.horizontal, 11).padding(.vertical, 5)
-                                .background(Theme.white).clipShape(Capsule())
-                                .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
-                                .contentShape(Capsule())
-                        }.buttonStyle(.plain)
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(text, forType: .string)
-                            store.showToast("已复制 Markdown")
-                        } label: {
-                            Text("复制 Markdown").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
-                                .padding(.horizontal, 11).padding(.vertical, 5)
-                                .background(Theme.white).clipShape(Capsule())
-                                .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
-                                .contentShape(Capsule())
-                        }.buttonStyle(.plain)
-                    }
-                    MarkdownDocView(text: text).textSelection(.enabled)
-                }
+                MarkdownDocView(text: text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 22).padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.white)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
+                    .hairline(Theme.borderWhisper, radius: Theme.rLG)
+                    .whisperShadow()
             } else if let error = store.mdSummaryErrors[m.id] {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("生成失败：\(error)").font(Theme.ui(12)).foregroundColor(Theme.danger500)
@@ -134,6 +181,22 @@ struct DetailScreen: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Theme.blue50)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+    }
+
+    private var refinePendingBanner: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("逐字稿已完整保存，正在生成纪要")
+                    .font(Theme.ui(12, .medium)).foregroundColor(Theme.inkPrimary)
+                Text("可以先查看或复制原始逐字稿，生成失败后也能重试")
+                    .font(Theme.mono(10)).foregroundColor(Theme.inkTertiary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(Theme.warmWhite)
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 
@@ -482,8 +545,6 @@ struct DetailScreen: View {
 
     // MARK: pinned action bar
 
-    @State private var showForward = false
-
     private var actionBar: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
@@ -493,27 +554,17 @@ struct DetailScreen: View {
                     .font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()
-            Button { showForward = true } label: {
-                Text("转发到群").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
-                    .padding(.horizontal, 16).padding(.vertical, 9)
-                    .background(Theme.glassFill)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showForward, arrowEdge: .top) {
-                ForwardPicker(meetingTitle: m.title) { chat in
-                    showForward = false
-                    store.forward(to: chat)
-                }
-            }
             Button { store.confirmAll() } label: {
-                Text("全部确认并建任务").font(Theme.ui(13, .semibold)).foregroundColor(.white)
+                Text(store.isBulkCreatingTasks ? "正在创建 \(store.bulkTaskCreationRemaining) 项…" : "全部确认并建任务")
+                    .font(Theme.ui(13, .semibold)).foregroundColor(.white)
                     .padding(.horizontal, 18).padding(.vertical, 9)
                     .background(Theme.inkGrad)
                     .clipShape(Capsule())
                     .glow(Color.black, radius: 9, opacity: 0.28)
-            }.buttonStyle(.plain)
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isBulkCreatingTasks)
+            .opacity(store.isBulkCreatingTasks ? 0.72 : 1)
         }
         .padding(.leading, 21).padding(.trailing, 13).padding(.vertical, 12)
         .background(.ultraThinMaterial)
@@ -527,97 +578,6 @@ struct DetailScreen: View {
         .padding(.bottom, 20)
         .padding(.top, 6)
         .background(Theme.canvas)
-    }
-}
-
-// MARK: - 转发到群：搜群 → 选一个 → 真发（markdown 纪要）
-
-struct ForwardPicker: View {
-    @EnvironmentObject var store: AppStore
-    let meetingTitle: String
-    var copyMarkdown: String? = nil       // 「复制」按钮的内容；nil = 当前会议纪要
-    let onPick: (Lark.Chat) -> Void
-
-    @State private var query = ""
-    @State private var chats: [Lark.Chat] = []
-    @State private var searching = false
-    @State private var searched = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("发到哪个群")
-                .font(Theme.mono(10, .semibold)).tracking(1.0).textCase(.uppercase)
-                .foregroundColor(Theme.inkTertiary)
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
-
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(Theme.inkTertiary)
-                TextField("搜群名…", text: $query)
-                    .textFieldStyle(.plain).font(Theme.ui(12.5))
-                    .onSubmit { search() }
-            }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(Theme.searchBg)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
-            .padding(.horizontal, 12).padding(.bottom, 8)
-
-            if searching {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("搜索中…").font(Theme.ui(12)).foregroundColor(Theme.inkTertiary)
-                }.padding(.horizontal, 14).padding(.vertical, 10)
-            } else if chats.isEmpty && searched {
-                Text("没搜到相关的群，换个词试试")
-                    .font(Theme.ui(12)).foregroundColor(Theme.inkTertiary)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-            } else {
-                ForEach(chats) { c in
-                    Button { onPick(c) } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: "person.2").font(.system(size: 11)).foregroundColor(Theme.inkTertiary)
-                            Text(c.name).font(Theme.ui(12.5)).foregroundColor(Theme.inkPrimary).lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 14).padding(.vertical, 7)
-                        .contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                }
-            }
-
-            Divider().padding(.vertical, 4)
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(copyMarkdown ?? AppStore.noteMarkdown(store.current),
-                                               forType: .string)
-                store.showToast("已复制，可手动粘贴到任何群")
-            } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: "doc.on.doc").font(.system(size: 11))
-                    Text("复制纪要（手动转发）").font(Theme.ui(12.5))
-                    Spacer(minLength: 0)
-                }
-                .foregroundColor(Theme.inkSecondary)
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            Color.clear.frame(height: 8)
-        }
-        .frame(width: 280, alignment: .leading)
-        .onAppear {
-            query = meetingTitle
-            search()
-        }
-    }
-
-    private func search() {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return }
-        searching = true
-        Task {
-            chats = await Lark.searchChats(query: q)
-            searching = false
-            searched = true
-        }
     }
 }
 
@@ -671,17 +631,23 @@ struct DetailTodoRow: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        switch todo.status {
-        case .unclaimed:
-            button("认领", bg: Theme.warn500, fg: .white, border: nil) { store.claimDTodo(todo.id) }
-        case .confirmed:
-            button("已建任务 ✓", bg: Theme.white, fg: Theme.green700, border: Theme.green500) { store.confirmDTodo(todo.id) }
-        case .pending:
-            button("确认", bg: Theme.ink1000, fg: .white, border: nil) { store.confirmDTodo(todo.id) }
+        if store.isCreatingTask(todo.id) {
+            button("创建中…", bg: Theme.white, fg: Theme.inkTertiary, border: Theme.borderDefault,
+                   disabled: true) {}
+        } else {
+            switch todo.status {
+            case .unclaimed:
+                button("认领", bg: Theme.warn500, fg: .white, border: nil) { store.claimDTodo(todo.id) }
+            case .confirmed:
+                button("已建任务 ✓", bg: Theme.white, fg: Theme.green700, border: Theme.green500) { store.confirmDTodo(todo.id) }
+            case .pending:
+                button("确认", bg: Theme.ink1000, fg: .white, border: nil) { store.confirmDTodo(todo.id) }
+            }
         }
     }
 
-    private func button(_ label: String, bg: Color, fg: Color, border: Color?, action: @escaping () -> Void) -> some View {
+    private func button(_ label: String, bg: Color, fg: Color, border: Color?, disabled: Bool = false,
+                        action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label).font(Theme.ui(12, .semibold)).foregroundColor(fg)
                 .padding(.horizontal, 12).padding(.vertical, 6)
@@ -694,6 +660,7 @@ struct DetailTodoRow: View {
                 }
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
         .fixedSize()
     }
 }

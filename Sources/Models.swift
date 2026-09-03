@@ -3,10 +3,31 @@ import Combine
 
 // MARK: - Enums
 
-enum Screen { case home, library, calendar, detail, todos, followup, weekly, daily, settings }
-enum TodoFilter { case all, open, overdue, done }
+enum Screen { case home, library, knowledge, calendar, detail, todos, followup, weekly, daily, settings }
+enum KnowledgeTab: String, CaseIterable, Identifiable {
+    case inbox
+    case projects
+    case ask
+    var id: String { rawValue }
+}
+enum KnowledgeInboxFilter: String, CaseIterable, Identifiable {
+    case pending
+    case conflicts
+    case missingOwner
+    case duplicates
+    case processed
+    var id: String { rawValue }
+}
+enum KnowledgeDateFilter: String, CaseIterable, Identifiable {
+    case all
+    case last7Days
+    case last30Days
+    case last90Days
+    var id: String { rawValue }
+}
+enum TodoFilter { case candidates, open, done }
 enum DetailStatus { case pending, unclaimed, confirmed }
-enum CrossStatus { case overdue, doing, done }
+enum CrossStatus { case candidate, overdue, doing, done }
 
 // MARK: - Data types
 
@@ -53,9 +74,9 @@ struct CrossTodo: Identifiable {
 
     static let sample: [CrossTodo] = [
         .init(id: 1, text: "完成纪要卡片折叠态前端联调", meeting: "周三产品评审会 · 6/10",
-              owner: "周岚", initial: "周", color: Color(hex: "0075de"), due: "6/13", status: .overdue),
+              owner: "周岚", initial: "周", color: Color(hex: "0075de"), due: "6/13", status: .candidate),
         .init(id: 2, text: "待办 → 飞书任务字段映射补充 open_id 兜底", meeting: "周三产品评审会 · 6/10",
-              owner: "高翔", initial: "高", color: Color(hex: "1f7a4c"), due: "6/16", status: .doing),
+              owner: "高翔", initial: "高", color: Color(hex: "1f7a4c"), due: "6/16", status: .candidate),
         .init(id: 3, text: "给出待办确认率基线埋点方案", meeting: "周三产品评审会 · 6/10",
               owner: "王凯", initial: "王", color: Color(hex: "d06a3a"), due: "6/14", status: .doing),
         .init(id: 4, text: "灰度首周用户访谈提纲", meeting: "产品周例会 · 6/3",
@@ -139,6 +160,10 @@ struct Procrastinator: Identifiable {
 
 @MainActor
 final class AppStore: ObservableObject {
+    private let noteRefiner: (String) async throws -> RefinedNote
+    private let knowledgeStore: KnowledgeStore
+    private let knowledgeWorker: KnowledgeExtractionWorker
+
     @Published var screen: Screen = .home
     @Published var showOnboarding = false
     @Published var obStep = 0
@@ -152,7 +177,7 @@ final class AppStore: ObservableObject {
     @Published var dtodos: [DetailTodo] = DetailTodo.sample
     @Published var ctodos: [CrossTodo] = CrossTodo.sample
     @Published var fitems: [FollowItem] = FollowItem.sample
-    @Published var filter: TodoFilter = .all
+    @Published var filter: TodoFilter = .candidates
     @Published var toast: String? = nil
 
     /// Real meetings — synced from Feishu (sync.sh) or captured live — else the sample fallback.
@@ -160,6 +185,28 @@ final class AppStore: ObservableObject {
     @Published var usingRealData: Bool
     @Published var selectedMeeting = 0
     @Published var refining = false
+    @Published var knowledgeEnabled = KnowledgeFeatureFlags.isEnabled
+    @Published var knowledgeTab: KnowledgeTab = .inbox
+    @Published private(set) var knowledgeUnits: [KnowledgeUnit] = []
+    @Published private(set) var knowledgeInboxItems: [KnowledgeInboxItem] = []
+    @Published private(set) var knowledgeProjects: [KnowledgeProject] = []
+    @Published private(set) var knowledgeJobs: [KnowledgeExtractionJob] = []
+    @Published private(set) var knowledgeUnavailableReason: String?
+    @Published var knowledgeInboxFilter: KnowledgeInboxFilter = .pending
+    @Published var knowledgeKindFilter: KnowledgeKind?
+    @Published var knowledgeSourceFilter: KnowledgeSourceKind?
+    @Published var knowledgeDateFilter: KnowledgeDateFilter = .all
+    @Published var knowledgeBackfillRunning = false
+    @Published var knowledgeBackfillPaused = true
+    @Published var selectedKnowledgeEvidence: KnowledgeInboxEvidence?
+    @Published var editingKnowledgeUnit: KnowledgeInboxItem?
+    @Published var duplicateKnowledgeReview: KnowledgeDuplicateReview?
+    @Published var conflictKnowledgeReview: KnowledgeConflictReview?
+    @Published var archiveReviewSession: ArchiveReviewSession?
+    @Published private(set) var archiveScanLoading = false
+    private var archiveFilesByMatchID: [String: TranscriptFile] = [:]
+    private var archiveMeetingTitles: [String: String] = [:]
+    private var knowledgePilotJobIDs: Set<String> = []
 
     // 每日综述 — cached per-day digest of all that day's meetings.
     @Published var dailyBlocks: [String: [NoteBlock]] = DailyStore.load()
@@ -218,6 +265,11 @@ final class AppStore: ObservableObject {
 
     // 已在飞书真实建卡的待办：meetingID|todoID → task guid（防重复建；同时是"已确认"的持久真源）。
     @Published var taskLinks: [String: String] = TaskLinkStore.load()
+    /// 飞书写入尚未返回时保持原状态，避免把“请求已发出”误画成“任务已创建”。
+    @Published private(set) var creatingTaskKeys: Set<String> = []
+    @Published private(set) var bulkTaskCreationRemaining = 0
+    private var bulkTaskCreationSucceeded = 0
+    private var bulkTaskCreationFailed = 0
 
     // 待办中心手动勾掉的完成态（meetingID|todoID），持久化 —— 重新派生列表时不清零。
     @Published var doneTodoKeys: Set<String> = {
@@ -253,8 +305,9 @@ final class AppStore: ObservableObject {
             for t in applyConfirmations(mv.dtodos, meetingID: mv.id) {
                 let key = "\(mv.id)|\(t.id)"
                 let label = mv.dayChip == "·" ? mv.title : "\(mv.title) · \(mv.dayChip)"
-                let done = t.status == .confirmed || doneTodoKeys.contains(key)
-                let status: CrossStatus = done ? .done
+                let confirmed = t.status == .confirmed
+                let status: CrossStatus = !confirmed ? .candidate
+                    : doneTodoKeys.contains(key) ? .done
                     : (Self.overdueDays(due: t.due) ?? 0) > 0 ? .overdue : .doing
                 out.append(CrossTodo(id: id, text: t.text, meeting: label,
                                      owner: t.owner ?? "待认领", initial: t.initial, color: t.color,
@@ -271,12 +324,44 @@ final class AppStore: ObservableObject {
     private var flashWork: DispatchWorkItem?
     private var syncForward: AnyCancellable?
 
-    /// `-demo YES`：跳过真实数据与飞书链路，只走内置示例（公开截图/演示用）
+    /// `-demo YES`：跳过真实数据与飞书链路，只走内置示例（公开截图/演示用）。
+    /// Hosted XCTest processes are forced into the same isolated path so tests never sync or mutate user data.
     static let demoMode = UserDefaults.standard.bool(forKey: "demo")
+        || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
-    init() {
-        let reals = Self.demoMode ? [] : RealData.load().map { MeetingVM(real: $0) }
-        let stored = Self.demoMode ? [] : LiveStore.load()
+    private static func realMeetingVMs(_ meetings: [RealMeeting],
+                                       knowledgeStore: KnowledgeStore = .shared) -> [MeetingVM] {
+        let sources = knowledgeStore.sources()
+        var latestSourceByMeeting: [String: KnowledgeSourceDocument] = [:]
+        for source in sources where source.sourceKind == .feishu {
+            if latestSourceByMeeting[source.meetingID] == nil {
+                latestSourceByMeeting[source.meetingID] = source
+            }
+        }
+        let segmentsBySource = Dictionary(grouping: knowledgeStore.allSegments(), by: \.sourceID)
+        return meetings.map { meeting in
+            let source = latestSourceByMeeting[meeting.meeting_id]
+            return MeetingVM(
+                real: meeting,
+                sourceText: source?.fullText,
+                sourceSegments: source.flatMap { segmentsBySource[$0.id] } ?? [])
+        }
+    }
+
+    init(loadPersistedData: Bool? = nil,
+         knowledgeEnabledOverride: Bool? = nil,
+         knowledgeStore: KnowledgeStore = .shared,
+         noteRefiner: @escaping (String) async throws -> RefinedNote = { transcript in
+             try await Refine.note(from: transcript)
+         }) {
+        self.noteRefiner = noteRefiner
+        self.knowledgeStore = knowledgeStore
+        self.knowledgeWorker = KnowledgeExtractionWorker(store: knowledgeStore)
+        if let knowledgeEnabledOverride { self.knowledgeEnabled = knowledgeEnabledOverride }
+        let shouldLoadPersistedData = loadPersistedData ?? !Self.demoMode
+        let realRecords = shouldLoadPersistedData ? RealData.load() : []
+        let reals = Self.realMeetingVMs(realRecords, knowledgeStore: knowledgeStore)
+        let stored = shouldLoadPersistedData ? LiveStore.load() : []
         liveDurations = Dictionary(uniqueKeysWithValues: stored.map { ($0.id, $0.durationSec) })
         let live = stored
             .sorted { $0.timestamp > $1.timestamp }                       // newest first
@@ -290,8 +375,9 @@ final class AppStore: ObservableObject {
 
         // Dev affordance: `open AfterMeet.app --args -screen detail [-onboarding YES]`
         switch UserDefaults.standard.string(forKey: "screen") {
-        case "library":  screen = .library
-        case "calendar": screen = .calendar
+        case "library":   screen = .library
+        case "knowledge": screen = .knowledge
+        case "calendar":  screen = .calendar
         case "settings": screen = .settings
         case "detail":   screen = .detail
         case "todos":    screen = .todos
@@ -299,6 +385,10 @@ final class AppStore: ObservableObject {
         case "weekly":   screen = .weekly
         case "daily":    screen = .daily
         default:         break
+        }
+        if UserDefaults.standard.bool(forKey: "archive") {
+            libraryRawTab = true
+            screen = .library
         }
         // 首启自动引导：老用户（库里已有数据）静默豁免，之后可从设置重看
         if UserDefaults.standard.bool(forKey: "onboarding") {
@@ -325,12 +415,15 @@ final class AppStore: ObservableObject {
             loadCalendar()
             autoRecoverOrphans()     // 近 7 天有转写没纪要的录音，默认补生成
         }
+        knowledgePilotJobIDs = knowledgeStore.pilotJobIDs()
         refreshDerived()
+        refreshKnowledgeState()
+        recoverPendingRefinements()
     }
 
     /// 自动同步拉到新会 → 并进列表并提示（本地捕获的仍排最上面）。
     private func mergeSynced(_ fresh: [RealMeeting]) {
-        let vms = fresh.map { MeetingVM(real: $0) }
+        let vms = Self.realMeetingVMs(fresh, knowledgeStore: knowledgeStore)
         if !usingRealData { meetings = [] }
         usingRealData = true
         let liveCount = meetings.prefix(while: { $0.id.hasPrefix("live-") }).count
@@ -338,6 +431,7 @@ final class AppStore: ObservableObject {
         if selectedMeeting >= liveCount { selectedMeeting += vms.count }   // 正在看的那场别被顶换
         rederiveTodos()
         refreshDerived()
+        refreshKnowledgeState()
         showToast("已同步 \(vms.count) 场新会议")
     }
 
@@ -347,73 +441,150 @@ final class AppStore: ObservableObject {
         go(.detail)
     }
 
-    /// A live-captured transcript came back — refine it, then drop the result in as a real meeting.
-    func ingestLive(transcript: String, durationSec: Int,
-                    capturedName: String, transcriptPath: String) {
+    /// Persist the raw capture first; note generation is a replaceable asynchronous derivative.
+    func ingestLive(capture result: CapturedTranscript,
+                    capturedName: String,
+                    sourceKindOverride: KnowledgeSourceKind? = nil,
+                    insertChronologically: Bool = false,
+                    quiet: Bool = false) {
+        let stopped = Date(timeIntervalSince1970: result.endedAt)
+        let storedID = "live-\(Int(result.endedAt))"
+        let userTitle = capturedName.trimmingCharacters(in: .whitespaces)
+        let initialTitle = userTitle.isEmpty ? "未命名会议" : userTitle
+        let pendingNote = RefinedNote.processing()
+        let persisted = LiveStore.append(StoredLiveMeeting(
+            id: storedID,
+            title: initialTitle,
+            timestamp: result.endedAt,
+            durationSec: result.durationSec,
+            transcript: result.text,
+            note: pendingNote))
+        if !persisted { showToast("录音写入数据库失败，已导出救援文件到数据目录") }
+
+        liveDurations[storedID] = result.durationSec
+        let pendingVM = MeetingVM(
+            live: pendingNote,
+            transcript: result.text,
+            durationSec: result.durationSec,
+            now: stopped,
+            title: initialTitle)
+        if let index = meetings.firstIndex(where: { $0.id == storedID }) {
+            meetings[index] = pendingVM
+            rederiveTodos()
+            refreshDerived()
+        } else if insertChronologically {
+            insertLiveMeetingSorted(pendingVM, ts: result.endedAt)
+        } else {
+            addLiveMeeting(pendingVM)
+        }
+        freshLiveID = storedID
         refining = true
-        let stopped = Date()                       // 停录时刻（提炼要几十秒，别把时间戳推迟）
+
+        if knowledgeStore.isAvailable {
+            let sensitivity = KnowledgeSensitivityClassifier.classify(
+                title: initialTitle,
+                content: result.text)
+            let bundle = KnowledgeSegmenter.sourceBundle(
+                from: result,
+                meetingID: storedID,
+                sourceKindOverride: sourceKindOverride,
+                sensitivity: sensitivity)
+            if !knowledgeStore.saveSource(
+                bundle.document, segments: bundle.segments, meetingTitle: initialTitle) {
+                showToast("录音已保存，知识来源索引将在稍后补齐")
+            } else {
+                if knowledgeEnabled {
+                    _ = KnowledgeJobPlanner.planExtraction(
+                        for: bundle.document,
+                        store: knowledgeStore,
+                        enabled: true)
+                    refreshKnowledgeState()
+                }
+                if !quiet { showToast("录音与逐字稿已保存，正在生成纪要…") }
+            }
+        } else if !quiet {
+            showToast("录音与逐字稿已保存，正在生成纪要…")
+        }
+
         Task {
-            // 提炼失败绝不丢会：带失败标记入库，详情页可重新生成（曾经整场 2 小时的会只剩 toast）
-            var note: RefinedNote
-            var refineError: String? = nil
-            do { note = try await Refine.note(from: transcript) }
-            catch {
+            let note: RefinedNote
+            let refineError: String?
+            do {
+                note = try await noteRefiner(result.text)
+                refineError = nil
+            } catch {
                 refineError = error.localizedDescription
                 note = .failed(reason: refineError!)
             }
-            // 名称与文件路径来自 stop 前的会话快照。自动连录时，capture 此刻可能已经属于下一场。
-            let userName = capturedName.trimmingCharacters(in: .whitespaces)
-            if userName.isEmpty, refineError == nil {
-                capture.setStoredMeetingName(note.title, transcriptPath: transcriptPath)
+            if userTitle.isEmpty, refineError == nil {
+                capture.setStoredMeetingName(note.title, transcriptPath: result.transcriptPath)
             }
-            let now = stopped
-            let title = userName.isEmpty ? note.title : userName
-            let storedID = "live-\(Int(now.timeIntervalSince1970))"
-            let persisted = LiveStore.append(StoredLiveMeeting(          // persist → survives a restart
-                id: storedID, title: title,
-                timestamp: now.timeIntervalSince1970, durationSec: durationSec,
-                transcript: transcript, note: note))
-            if !persisted { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
-            liveDurations[storedID] = durationSec
-            let vm = MeetingVM(live: note, transcript: transcript, durationSec: durationSec,
-                               now: now, title: title)
-            addLiveMeeting(vm)
+            let title = userTitle.isEmpty && refineError == nil ? note.title : initialTitle
+            LiveStore.replaceNote(id: storedID, note: note, title: title)
+            if let index = meetings.firstIndex(where: { $0.id == storedID }) {
+                meetings[index] = MeetingVM(
+                    live: note,
+                    transcript: result.text,
+                    durationSec: result.durationSec,
+                    now: stopped,
+                    title: title)
+                rederiveTodos()
+                refreshDerived()
+            }
             refining = false
-            freshLiveID = vm.id            // 录制条转完成态，用户点了才跳，不抢页面
-            showToast(refineError == nil ? "纪要已生成:\(vm.title)"
-                                         : "提炼失败，录音已保存，可在详情页重新生成")
+            if !quiet || refineError != nil {
+                showToast(refineError == nil ? "纪要已生成：\(title)"
+                                             : "提炼失败，录音已保存，可在详情页重新生成")
+            }
         }
     }
 
-    /// 提炼失败的会（refineFailed 块）在详情页重试生成纪要。
+    /// 提炼失败或上次异常退出时仍处于 processing 的会议，原地重试。
     @Published var regenPending: Set<String> = []
     func regenerateNote(id: String) {
         guard !regenPending.contains(id),
-              let m = meetings.first(where: { $0.id == id }) else { return }
-        let transcript = m.rawTranscript
+              let meeting = meetings.first(where: { $0.id == id }) else { return }
+        let transcript = meeting.rawTranscript
         guard transcript.count >= 4 else { showToast("这场会没有可用的转写文本"); return }
         regenPending.insert(id)
+        refining = true
+        replaceLiveMeetingNote(id: id, note: .processing(), title: meeting.title)
         Task {
             do {
-                let note = try await Refine.note(from: transcript)
-                // "未命名会议"或占位标题换成生成的；用户/日历改过的名字保留
-                let keepTitle = !(m.title.isEmpty || m.title.hasPrefix("未命名会议"))
-                let title = keepTitle ? m.title : note.title
-                LiveStore.replaceNote(id: id, note: note, title: title)
-                if let i = meetings.firstIndex(where: { $0.id == id }),
-                   let stored = LiveStore.load().first(where: { $0.id == id }) {
-                    meetings[i] = MeetingVM(live: note, transcript: stored.transcript,
-                                            durationSec: stored.durationSec,
-                                            now: Date(timeIntervalSince1970: stored.timestamp), title: title)
-                    rederiveTodos()
-                    refreshDerived()
-                }
-                showToast("纪要已生成:\(title)")
+                let note = try await noteRefiner(transcript)
+                let keepTitle = !(meeting.title.isEmpty || meeting.title.hasPrefix("未命名会议"))
+                let title = keepTitle ? meeting.title : note.title
+                replaceLiveMeetingNote(id: id, note: note, title: title)
+                showToast("纪要已生成：\(title)")
             } catch {
+                let failed = RefinedNote.failed(reason: error.localizedDescription)
+                replaceLiveMeetingNote(id: id, note: failed, title: meeting.title)
                 showToast("提炼失败：\(error.localizedDescription)")
             }
             regenPending.remove(id)
+            refining = false
         }
+    }
+
+    private func replaceLiveMeetingNote(id: String, note: RefinedNote, title: String) {
+        LiveStore.replaceNote(id: id, note: note, title: title)
+        guard let index = meetings.firstIndex(where: { $0.id == id }),
+              let stored = LiveStore.load().first(where: { $0.id == id }) else { return }
+        meetings[index] = MeetingVM(
+            live: note,
+            transcript: stored.transcript,
+            durationSec: stored.durationSec,
+            now: Date(timeIntervalSince1970: stored.timestamp),
+            title: title)
+        rederiveTodos()
+        refreshDerived()
+    }
+
+    private func recoverPendingRefinements() {
+        let ids = meetings.filter {
+            $0.id.hasPrefix("live-") && $0.displayBlocks.contains(where: { $0.type == "refinePending" })
+        }.map(\.id)
+        for id in ids { regenerateNote(id: id) }
     }
 
     /// 转写档案里的孤儿录音（app 早期版本提炼失败被丢弃的）→ 补生成纪要入库。
@@ -442,29 +613,26 @@ final class AppStore: ObservableObject {
     }
 
     /// 档案 → 会议（提炼失败也入库，详情页可重试 —— 和 ingestLive 同一条"绝不丢会"原则）
-    private func ingestArchive(_ f: TranscriptFile, quiet: Bool) async {
-        var note: RefinedNote
-        var refineError: String? = nil
-        do { note = try await Refine.note(from: f.body) }
-        catch {
-            refineError = error.localizedDescription
-            note = .failed(reason: refineError!)
-        }
-        let stoppedTs = f.end.timeIntervalSince1970
-        let dur = max(60, Int(f.end.timeIntervalSince(f.start)))
-        let id = "live-\(Int(stoppedTs))"
-        let stored = StoredLiveMeeting(id: id, title: note.title, timestamp: stoppedTs,
-                                       durationSec: dur, transcript: f.body, note: note)
-        if !LiveStore.append(stored) { showToast("纪要写入数据库失败，已导出救援文件到数据目录") }
-        liveDurations[id] = dur
-        let vm = MeetingVM(live: note, transcript: f.body, durationSec: dur,
-                           now: Date(timeIntervalSince1970: stoppedTs), title: note.title)
-        insertLiveMeetingSorted(vm, ts: stoppedTs)
-        if refineError != nil {
-            showToast("发现未生成纪要的录音，提炼失败已保留，可在详情页重试")
-        } else if !quiet {
-            showToast("纪要已生成:\(note.title)")
-        }
+    private func ingestArchive(_ file: TranscriptFile, quiet: Bool) async {
+        let start = min(file.start.timeIntervalSince1970, file.end.timeIntervalSince1970)
+        let end = max(file.start.timeIntervalSince1970, file.end.timeIntervalSince1970)
+        let duration = max(60, Int(end - start))
+        let result = CapturedTranscript(
+            text: file.body,
+            segments: [],
+            transcriptionMode: .unknown,
+            sessionID: "archive-" + String(KnowledgeIdentity.contentHash(file.body).prefix(20)),
+            startedAt: start,
+            endedAt: end,
+            durationSec: duration,
+            transcriptPath: file.url.path,
+            segmentSidecarPath: nil)
+        ingestLive(
+            capture: result,
+            capturedName: "",
+            sourceKindOverride: .archive,
+            insertChronologically: true,
+            quiet: quiet)
     }
 
     /// 启动自动恢复：近 7 天的孤儿录音（有转写、没会议）默认补生成纪要，不用用户动手。
@@ -590,13 +758,11 @@ final class AppStore: ObservableObject {
         guard capture.isCapturing, !stopInFlight else { return }
         stopInFlight = true
         let capturedName = capture.meetingName
-        let transcriptPath = capture.savedPath
         Task {
-            let text = await capture.stop()
+            let result = await capture.stop()
             stopInFlight = false
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
-                ingestLive(transcript: text, durationSec: capture.elapsed,
-                           capturedName: capturedName, transcriptPath: transcriptPath)
+            if result.text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
+                ingestLive(capture: result, capturedName: capturedName)
             }
         }
     }
@@ -607,14 +773,12 @@ final class AppStore: ObservableObject {
         guard capture.isCapturing, !stopInFlight else { return }
         stopInFlight = true
         let capturedName = capture.meetingName
-        let transcriptPath = capture.savedPath
         showToast("检测到新会议，已保存上一场并开始新录制")
         Task {
-            let text = await capture.stop()
+            let result = await capture.stop()
             stopInFlight = false
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
-                ingestLive(transcript: text, durationSec: capture.elapsed,
-                           capturedName: capturedName, transcriptPath: transcriptPath)
+            if result.text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
+                ingestLive(capture: result, capturedName: capturedName)
             }
             beginCapture(openPanel: false)
         }
@@ -634,8 +798,8 @@ final class AppStore: ObservableObject {
         }
         meetingsByDayCache = order.map { (day: $0, items: map[$0] ?? []) }
 
-        staleTodosCache = ctodos.filter { $0.status != .done && (Self.overdueDays(due: $0.due) ?? 0) > 3 }
-        maxOverdueDaysCache = ctodos.filter { $0.status != .done }
+        staleTodosCache = ctodos.filter { $0.status == .overdue && (Self.overdueDays(due: $0.due) ?? 0) > 3 }
+        maxOverdueDaysCache = ctodos.filter { $0.status == .overdue }
             .compactMap { Self.overdueDays(due: $0.due) }.filter { $0 > 0 }.max() ?? 0
 
         recurringCardsCache = computeRecurringCards()
@@ -818,6 +982,495 @@ final class AppStore: ObservableObject {
         if let idx = meetings.firstIndex(where: { $0.id == id }) { selectMeeting(idx) }
     }
 
+    func setKnowledgeEnabled(_ enabled: Bool) {
+        knowledgeEnabled = enabled
+        KnowledgeFeatureFlags.setEnabled(enabled)
+        if enabled { refreshKnowledgeState() }
+    }
+
+    func refreshKnowledgeState() {
+        knowledgeUnavailableReason = knowledgeStore.unavailableReason
+        knowledgeUnits = knowledgeStore.units()
+        knowledgeInboxItems = knowledgeStore.inboxItems()
+        knowledgeProjects = knowledgeStore.projects(includeArchived: true)
+        knowledgeJobs = knowledgeStore.jobs()
+    }
+
+    func beginConflictReview(_ item: KnowledgeInboxItem) {
+        let pending = knowledgeInboxItems.filter {
+            $0.id != item.id
+                && $0.unit.reviewStatus != .rejected
+                && $0.unit.conflictStatus == .pending
+        }
+        let sameSubject = pending.filter {
+            let subjectMatches = item.unit.subject != nil && $0.unit.subject == item.unit.subject
+            let predicateMatches = item.unit.predicate != nil && $0.unit.predicate == item.unit.predicate
+            return subjectMatches || predicateMatches
+        }
+        let alternatives = sameSubject.isEmpty ? pending : sameSubject
+        guard !alternatives.isEmpty else {
+            showToast("没有找到另一条待处理冲突")
+            return
+        }
+        conflictKnowledgeReview = KnowledgeConflictReview(
+            id: item.id,
+            primary: item,
+            alternatives: alternatives)
+    }
+
+    @discardableResult
+    func resolveKnowledgeConflict(otherID: String,
+                                  resolution: KnowledgeConflictResolution) -> Bool {
+        guard let review = conflictKnowledgeReview,
+              review.alternatives.contains(where: { $0.id == otherID }),
+              knowledgeStore.resolveConflict(
+                primaryID: review.primary.id,
+                otherID: otherID,
+                resolution: resolution,
+                reason: "用户在冲突确认中处理") else {
+            showToast("冲突处理失败，知识状态可能已变化")
+            return false
+        }
+        conflictKnowledgeReview = nil
+        refreshKnowledgeState()
+        showToast("冲突已处理，历史版本仍保留")
+        return true
+    }
+
+    func beginDuplicateReview(_ item: KnowledgeInboxItem) {
+        let matches = knowledgeInboxItems.filter {
+            $0.unit.fingerprint == item.unit.fingerprint && $0.unit.reviewStatus != .rejected
+        }
+        guard matches.count > 1 else {
+            showToast("没有可合并的重复知识")
+            return
+        }
+        duplicateKnowledgeReview = KnowledgeDuplicateReview(
+            id: item.unit.fingerprint,
+            items: matches)
+    }
+
+    @discardableResult
+    func mergeDuplicateKnowledge(primaryID: String) -> Bool {
+        guard let review = duplicateKnowledgeReview,
+              review.items.contains(where: { $0.id == primaryID }) else { return false }
+        let duplicates = review.items.filter { $0.id != primaryID }
+        for duplicate in duplicates {
+            guard knowledgeStore.mergeUnits(
+                primaryID: primaryID,
+                duplicateID: duplicate.id,
+                reason: "用户在重复知识确认中合并") else {
+                refreshKnowledgeState()
+                showToast("部分合并失败，请检查剩余候选")
+                return false
+            }
+        }
+        duplicateKnowledgeReview = nil
+        refreshKnowledgeState()
+        showToast("已合并 \(duplicates.count) 条重复知识")
+        return true
+    }
+
+    func rejectKnowledgeUnit(id: String) {
+        guard knowledgeStore.rejectUnit(id: id) else {
+            showToast("忽略失败：知识状态已变化")
+            return
+        }
+        refreshKnowledgeState()
+        showToast("已忽略，可在“已处理”中恢复")
+    }
+
+    func restoreKnowledgeUnit(id: String) {
+        let meetingID = knowledgeInboxItems.first(where: { $0.id == id })?.sources.first?.meetingID
+        let title = meetingID.flatMap { sourceID in
+            meetings.first(where: { $0.id == sourceID })?.title
+        } ?? meetingID ?? "会议知识"
+        guard knowledgeStore.restoreUnit(id: id, meetingTitle: title) else {
+            showToast("恢复失败：来源证据不可用")
+            return
+        }
+        refreshKnowledgeState()
+        showToast("已恢复到待确认")
+    }
+
+    func beginEditingKnowledgeUnit(_ item: KnowledgeInboxItem) {
+        editingKnowledgeUnit = item
+    }
+
+    @discardableResult
+    func editKnowledgeUnit(id: String, edits: KnowledgeUnitEdits) -> Bool {
+        let meetingID = knowledgeInboxItems.first(where: { $0.id == id })?.sources.first?.meetingID
+        let title = meetingID.flatMap { sourceID in
+            meetings.first(where: { $0.id == sourceID })?.title
+        } ?? meetingID ?? "会议知识"
+        guard knowledgeStore.editUnit(id: id, edits: edits, meetingTitle: title) else {
+            showToast("保存失败：请检查内容和证据状态")
+            return false
+        }
+        editingKnowledgeUnit = nil
+        refreshKnowledgeState()
+        showToast("已修改并加入知识库")
+        return true
+    }
+
+    func confirmKnowledgeUnit(id: String) {
+        guard knowledgeStore.confirmUnit(id: id) else {
+            showToast("确认失败：候选缺少有效证据或状态已变化")
+            return
+        }
+        refreshKnowledgeState()
+        showToast("已加入知识库")
+    }
+
+    func knowledgeEvidenceWindow(for evidence: KnowledgeInboxEvidence) -> [KnowledgeSourceSegment] {
+        let segments = knowledgeStore.segments(sourceID: evidence.source.id)
+        guard let index = segments.firstIndex(where: { $0.id == evidence.segment.id }) else {
+            return [evidence.segment]
+        }
+        let lower = max(segments.startIndex, index - 1)
+        let upper = min(segments.endIndex, index + 2)
+        return Array(segments[lower..<upper])
+    }
+
+    func openKnowledgeEvidence(_ evidence: KnowledgeInboxEvidence) {
+        selectedKnowledgeEvidence = evidence
+    }
+
+    func openKnowledgeEvidenceMeeting(_ evidence: KnowledgeInboxEvidence) {
+        guard let index = meetings.firstIndex(where: { $0.id == evidence.source.meetingID }) else {
+            showToast("来源会议当前不在会议库中")
+            return
+        }
+        selectedKnowledgeEvidence = nil
+        selectMeeting(index)
+    }
+
+    func startArchiveReviewScan() {
+        guard !archiveScanLoading else { return }
+        archiveScanLoading = true
+        Task {
+            let files = await Task.detached(priority: .utility) {
+                TranscriptArchiveView.loadFiles()
+            }.value
+            let stored = await Task.detached(priority: .utility) { LiveStore.load() }.value
+            prepareArchiveReview(archives: files, storedMeetings: stored)
+            archiveScanLoading = false
+        }
+    }
+
+    @discardableResult
+    func prepareArchiveReview(archives: [TranscriptFile],
+                              storedMeetings: [StoredLiveMeeting]) -> ArchiveMatchReport {
+        let report = KnowledgeArchiveMatcher.reconcile(
+            archives: archives,
+            meetings: storedMeetings)
+        archiveMeetingTitles = Dictionary(uniqueKeysWithValues: storedMeetings.map { ($0.id, $0.title) })
+        let filesByPath = Dictionary(uniqueKeysWithValues: archives.map { ($0.url.path, $0) })
+        archiveFilesByMatchID = Dictionary(uniqueKeysWithValues: report.records.compactMap { record in
+            filesByPath[record.archivePath].map { (record.id, $0) }
+        })
+        archiveReviewSession = ArchiveReviewSession(report: report)
+        return report
+    }
+
+    @discardableResult
+    func bindArchiveRecord(_ recordID: String, to meetingID: String) -> Bool {
+        guard let session = archiveReviewSession,
+              let record = session.report.records.first(where: { $0.id == recordID }),
+              record.status == .ambiguous,
+              record.candidateMeetingIDs.contains(meetingID),
+              let file = archiveFilesByMatchID[recordID] else { return false }
+        let title = meetings.first(where: { $0.id == meetingID })?.title
+            ?? archiveMeetingTitles[meetingID] ?? meetingID
+        let sensitivity = KnowledgeSensitivityClassifier.classify(title: title, content: file.body)
+        let bundle = KnowledgeSegmenter.plainTextSourceBundle(
+            content: file.body,
+            meetingID: meetingID,
+            sourceKind: .archive,
+            locator: file.url.path,
+            startedAt: min(file.start, file.end).timeIntervalSince1970,
+            endedAt: max(file.start, file.end).timeIntervalSince1970,
+            observedAt: max(file.start, file.end).timeIntervalSince1970,
+            sensitivity: sensitivity)
+        guard knowledgeStore.saveSource(
+            bundle.document,
+            segments: bundle.segments,
+            meetingTitle: title) else { return false }
+        _ = knowledgeStore.appendFeedback(KnowledgeFeedbackEvent(
+            id: UUID().uuidString.lowercased(),
+            targetType: "source_document",
+            targetID: bundle.document.id,
+            action: .relate,
+            beforeJSON: "{\"archive_match\":\"ambiguous\"}",
+            afterJSON: "{\"meeting_id\":\"\(meetingID)\"}",
+            reason: "用户确认档案所属会议",
+            actor: "user",
+            createdAt: Date().timeIntervalSince1970))
+        if knowledgeEnabled {
+            let result = KnowledgeJobPlanner.planExtraction(
+                for: bundle.document,
+                store: knowledgeStore,
+                enabled: true)
+            switch result {
+            case .enqueued(let job), .existing(let job):
+                knowledgePilotJobIDs.insert(job.id)
+                _ = knowledgeStore.savePilotJobIDs(knowledgePilotJobIDs)
+            default: break
+            }
+        }
+        markArchiveRecordResolved(recordID, meetingID: meetingID)
+        refreshKnowledgeState()
+        showToast("转写档案已绑定到「\(title)」")
+        return true
+    }
+
+    func importArchiveRecordAsMeeting(_ recordID: String) async -> Bool {
+        guard let session = archiveReviewSession,
+              let record = session.report.records.first(where: { $0.id == recordID }),
+              record.status == .orphan || record.status == .ambiguous,
+              let file = archiveFilesByMatchID[recordID],
+              !archivePending.contains(file.title) else { return false }
+        let end = max(file.start, file.end).timeIntervalSince1970
+        let meetingID = "live-\(Int(end))"
+        guard !meetings.contains(where: { $0.id == meetingID }),
+              !LiveStore.load().contains(where: { $0.id == meetingID }) else {
+            showToast("该时间点已有会议，请改为绑定到已有会议")
+            return false
+        }
+        archivePending.insert(file.title)
+        await ingestArchive(file, quiet: false)
+        archivePending.remove(file.title)
+        markArchiveRecordResolved(recordID, meetingID: meetingID)
+        refreshKnowledgeState()
+        return true
+    }
+
+    private func markArchiveRecordResolved(_ recordID: String, meetingID: String) {
+        guard let session = archiveReviewSession,
+              let index = session.report.records.firstIndex(where: { $0.id == recordID }) else { return }
+        var records = session.report.records
+        let previous = records[index]
+        records[index] = ArchiveMatchRecord(
+            id: previous.id,
+            archiveTitle: previous.archiveTitle,
+            archivePath: previous.archivePath,
+            characterCount: previous.characterCount,
+            startedAt: previous.startedAt,
+            endedAt: previous.endedAt,
+            contentHash: previous.contentHash,
+            status: .matched,
+            basis: previous.basis,
+            candidateMeetingIDs: [meetingID])
+        archiveFilesByMatchID[recordID] = nil
+        archiveReviewSession = ArchiveReviewSession(
+            id: session.id,
+            report: ArchiveMatchReport(records: records))
+    }
+
+    var knowledgeBackfillProgress: KnowledgeBackfillProgress {
+        let pilotJobs = knowledgeJobs.filter { knowledgePilotJobIDs.contains($0.id) }
+        return KnowledgeBackfillProgress(
+            total: pilotJobs.count,
+            completed: pilotJobs.filter { $0.state == .done }.count,
+            running: pilotJobs.filter { $0.state == .running }.count,
+            waiting: pilotJobs.filter { $0.state == .pending || $0.state == .retry }.count,
+            failed: pilotJobs.filter { $0.state == .failed }.count,
+            cancelled: pilotJobs.filter { $0.state == .cancelled }.count,
+            candidateUnits: knowledgeInboxItems.filter { item in
+                item.unit.reviewStatus == .candidate
+                    && item.sources.contains { source in
+                        pilotJobs.contains { $0.sourceID == source.id }
+                    }
+            }.count)
+    }
+
+    @discardableResult
+    func prepareKnowledgePilot(from storedMeetings: [StoredLiveMeeting], limit: Int = 10) -> Int {
+        guard knowledgeEnabled, knowledgeStore.isAvailable, limit > 0 else { return 0 }
+        var prepared = 0
+        var sourceByMeeting = Dictionary(
+            grouping: knowledgeStore.sources(), by: \.meetingID)
+            .compactMapValues { $0.sorted { $0.updatedAt > $1.updatedAt }.first }
+        let jobsBySource = Dictionary(grouping: knowledgeStore.jobs(), by: \.sourceID)
+        for meeting in storedMeetings.sorted(by: { $0.timestamp > $1.timestamp }) {
+            guard prepared < limit,
+                  meeting.transcript.trimmingCharacters(in: .whitespacesAndNewlines).count >= 300,
+                  KnowledgeSensitivityClassifier.classify(
+                    title: meeting.title, content: meeting.transcript) == .normal else { continue }
+            let source: KnowledgeSourceDocument
+            if let existing = sourceByMeeting[meeting.id] {
+                if jobsBySource[existing.id]?.isEmpty == false { continue }
+                source = existing
+            } else {
+                let bundle = KnowledgeSegmenter.plainTextSourceBundle(
+                    content: meeting.transcript,
+                    meetingID: meeting.id,
+                    sourceKind: .archive,
+                    startedAt: meeting.timestamp - Double(max(0, meeting.durationSec)),
+                    endedAt: meeting.timestamp,
+                    observedAt: meeting.timestamp,
+                    sensitivity: .normal)
+                guard knowledgeStore.saveSource(
+                    bundle.document, segments: bundle.segments, meetingTitle: meeting.title) else { continue }
+                source = bundle.document
+                sourceByMeeting[meeting.id] = source
+            }
+            let result = KnowledgeJobPlanner.planExtraction(
+                for: source,
+                store: knowledgeStore,
+                enabled: true,
+                now: Date().timeIntervalSince1970)
+            switch result {
+            case .enqueued(let job), .existing(let job):
+                knowledgePilotJobIDs.insert(job.id)
+                prepared += 1
+            default: break
+            }
+        }
+        _ = knowledgeStore.savePilotJobIDs(knowledgePilotJobIDs)
+        refreshKnowledgeState()
+        return prepared
+    }
+
+    func startKnowledgePilot() {
+        guard !knowledgeBackfillRunning else { return }
+        let prepared = prepareKnowledgePilot(from: LiveStore.load(), limit: 10)
+        guard prepared > 0 || knowledgeBackfillProgress.waiting > 0 else {
+            showToast("没有可试跑的非敏感历史会议")
+            return
+        }
+        knowledgeBackfillPaused = false
+        Task { await runKnowledgeQueue() }
+    }
+
+    func pauseKnowledgeBackfill() {
+        knowledgeBackfillPaused = true
+        showToast(knowledgeBackfillRunning ? "将在当前来源完成后暂停" : "知识提炼已暂停")
+    }
+
+    func continueKnowledgeBackfill() {
+        guard !knowledgeBackfillRunning else { return }
+        knowledgeBackfillPaused = false
+        Task { await runKnowledgeQueue() }
+    }
+
+    func retryFailedKnowledgeJobs() {
+        let failedIDs = knowledgeJobs.filter {
+            $0.state == .failed && knowledgePilotJobIDs.contains($0.id)
+        }.map(\.id)
+        guard !failedIDs.isEmpty else { return }
+        Task {
+            for id in failedIDs { _ = await knowledgeWorker.retry(jobID: id) }
+            refreshKnowledgeState()
+            continueKnowledgeBackfill()
+        }
+    }
+
+    func runKnowledgeQueue(client: any KnowledgeExtractionClient = RefineKnowledgeExtractionClient()) async {
+        guard !knowledgeBackfillRunning, !knowledgeBackfillPaused, knowledgeEnabled else { return }
+        knowledgeBackfillRunning = true
+        defer {
+            knowledgeBackfillRunning = false
+            refreshKnowledgeState()
+        }
+        let metadata = Dictionary(uniqueKeysWithValues: meetings.map {
+            ($0.id, KnowledgeMeetingMetadata(title: $0.title, dateLabel: $0.recentMeta))
+        })
+        let pipeline = KnowledgeExtractionPipeline(
+            store: knowledgeStore,
+            client: client,
+            meetingMetadata: { meetingID in
+                metadata[meetingID] ?? KnowledgeMeetingMetadata(title: meetingID, dateLabel: nil)
+            })
+        while !knowledgeBackfillPaused {
+            let processed = await knowledgeWorker.runNext(allowedJobIDs: knowledgePilotJobIDs) { job in
+                try await pipeline.execute(job)
+            }
+            refreshKnowledgeState()
+            if !processed { break }
+        }
+    }
+
+    var visibleKnowledgeInboxItems: [KnowledgeInboxItem] {
+        Self.filterKnowledgeInbox(
+            knowledgeInboxItems,
+            state: knowledgeInboxFilter,
+            kind: knowledgeKindFilter,
+            source: knowledgeSourceFilter,
+            date: knowledgeDateFilter,
+            now: Date())
+    }
+
+    func knowledgeInboxCount(_ filter: KnowledgeInboxFilter) -> Int {
+        Self.filterKnowledgeInbox(
+            knowledgeInboxItems,
+            state: filter,
+            kind: knowledgeKindFilter,
+            source: knowledgeSourceFilter,
+            date: knowledgeDateFilter,
+            now: Date()).count
+    }
+
+    nonisolated static func filterKnowledgeInbox(_ items: [KnowledgeInboxItem],
+                                     state: KnowledgeInboxFilter,
+                                     kind: KnowledgeKind?,
+                                     source: KnowledgeSourceKind?,
+                                     date: KnowledgeDateFilter,
+                                     now: Date) -> [KnowledgeInboxItem] {
+        let cutoff: TimeInterval? = switch date {
+        case .all: nil
+        case .last7Days: now.addingTimeInterval(-7 * 86_400).timeIntervalSince1970
+        case .last30Days: now.addingTimeInterval(-30 * 86_400).timeIntervalSince1970
+        case .last90Days: now.addingTimeInterval(-90 * 86_400).timeIntervalSince1970
+        }
+        return items.filter { item in
+            let stateMatches: Bool = switch state {
+            case .pending: item.unit.reviewStatus == .candidate
+            case .conflicts: item.unit.conflictStatus == .pending
+            case .missingOwner: item.unit.reviewStatus == .candidate && item.isMissingOwner
+            case .duplicates: item.unit.reviewStatus == .candidate && item.duplicateCount > 1
+            case .processed: item.unit.reviewStatus != .candidate
+            }
+            return stateMatches
+                && (kind == nil || item.unit.kind == kind)
+                && (source == nil || item.sourceKinds.contains(source!))
+                && (cutoff == nil || item.unit.observedAt >= cutoff!)
+        }.sorted { left, right in
+            let leftPriority = knowledgeKindPriority(left.unit.kind)
+            let rightPriority = knowledgeKindPriority(right.unit.kind)
+            if leftPriority != rightPriority { return leftPriority < rightPriority }
+            if left.unit.evidenceLevel != right.unit.evidenceLevel {
+                return left.unit.evidenceLevel == .direct
+            }
+            if left.unit.observedAt != right.unit.observedAt {
+                return left.unit.observedAt > right.unit.observedAt
+            }
+            return left.id < right.id
+        }
+    }
+
+    nonisolated private static func knowledgeKindPriority(_ kind: KnowledgeKind) -> Int {
+        switch kind {
+        case .decision: return 0
+        case .action: return 1
+        case .openQuestion: return 2
+        case .metric: return 3
+        case .risk: return 4
+        case .dispute: return 5
+        case .fact: return 6
+        }
+    }
+
+    var knowledgeAttentionCount: Int {
+        guard knowledgeEnabled else { return 0 }
+        return knowledgeUnits.filter { $0.reviewStatus == .candidate }.count
+            + knowledgeJobs.filter { $0.state == .failed }.count
+    }
+
+    var knowledgeBadge: String? {
+        knowledgeAttentionCount > 0 ? String(knowledgeAttentionCount) : nil
+    }
+
     func showToast(_ message: String) {
         toast = message
         toastWork?.cancel()
@@ -832,37 +1485,52 @@ final class AppStore: ObservableObject {
 
     private func linkKey(_ todoID: Int) -> String { "\(current.id)|\(todoID)" }
 
+    func isCreatingTask(_ todoID: Int) -> Bool { creatingTaskKeys.contains(linkKey(todoID)) }
+    var isBulkCreatingTasks: Bool { bulkTaskCreationRemaining > 0 }
+
     func confirmDTodo(_ id: Int) {
         guard let i = dtodos.firstIndex(where: { $0.id == id }) else { return }
-        if dtodos[i].status == .confirmed {          // 撤回只改本地状态；已建的飞书任务保留
-            dtodos[i].status = dtodos[i].orig
+        if dtodos[i].status == .confirmed {
+            showToast("该待办已经创建过飞书任务")
             return
         }
-        dtodos[i].status = .confirmed
+        guard !isCreatingTask(id) else { return }
+        if !usingRealData || !Lark.available { dtodos[i].status = .confirmed }
         createLarkTask(for: dtodos[i], assignToSelf: false)
     }
 
     func claimDTodo(_ id: Int) {
         guard let i = dtodos.firstIndex(where: { $0.id == id }) else { return }
-        dtodos[i].status = .confirmed
-        dtodos[i].owner = userName.isEmpty ? "我" : userName
-        dtodos[i].initial = userName.isEmpty ? "我" : userInitial
-        dtodos[i].color = Theme.green500
+        guard !isCreatingTask(id) else { return }
+        if !usingRealData || !Lark.available {
+            dtodos[i].status = .confirmed
+            dtodos[i].owner = userName.isEmpty ? "我" : userName
+            dtodos[i].initial = userName.isEmpty ? "我" : userInitial
+            dtodos[i].color = Theme.green500
+        }
         createLarkTask(for: dtodos[i], assignToSelf: true)
     }
 
     func confirmAll() {
-        let pending = dtodos.filter { $0.status == .pending }
-        guard !pending.isEmpty else { return }
-        for i in dtodos.indices where dtodos[i].status == .pending {
-            dtodos[i].status = .confirmed
+        // “全部”必须同时覆盖待确认和待认领；待认领项建成未指派任务，之后仍可在飞书认领。
+        let candidates = dtodos.filter {
+            $0.status != .confirmed && taskLinks[linkKey($0.id)] == nil && !isCreatingTask($0.id)
         }
-        for t in pending { createLarkTask(for: t, assignToSelf: false, quiet: true) }
-        if usingRealData && Lark.available {
-            showToast("正在创建 \(pending.count) 个飞书任务…")
-        } else {
-            showToast("已确认 \(pending.count) 条（示例数据，未创建真实任务）")
+        guard !candidates.isEmpty else {
+            showToast("没有需要创建的待办")
+            return
         }
+        guard usingRealData && Lark.available else {
+            for i in dtodos.indices where dtodos[i].status != .confirmed { dtodos[i].status = .confirmed }
+            showToast("已确认 \(candidates.count) 条（未创建真实飞书任务）")
+            return
+        }
+
+        bulkTaskCreationRemaining = candidates.count
+        bulkTaskCreationSucceeded = 0
+        bulkTaskCreationFailed = 0
+        showToast("正在创建 \(candidates.count) 个飞书任务…")
+        for todo in candidates { createLarkTask(for: todo, assignToSelf: false, quiet: true) }
     }
 
     /// 真·建飞书任务。负责人姓名只认精确唯一匹配（宁可不指派不可派错）；
@@ -876,11 +1544,14 @@ final class AppStore: ObservableObject {
             if !quiet { showToast("未检测到 lark-cli，任务仅保存在本地") }
             return
         }
-        let key = linkKey(todo.id)
+        let meetingID = current.id
+        let key = "\(meetingID)|\(todo.id)"
         guard taskLinks[key] == nil else {
             if !quiet { showToast("该待办已创建过飞书任务") }
             return
         }
+        guard !creatingTaskKeys.contains(key) else { return }
+        creatingTaskKeys.insert(key)
         let meetingTitle = current.title
         let owner = todo.owner
         Task {
@@ -902,22 +1573,46 @@ final class AppStore: ObservableObject {
                 taskLinks[key] = created.guid
                 TaskLinkStore.save(taskLinks)
                 rederiveTodos()
-                refreshDerived()
-                if !quiet {
-                    showToast(assignToSelf ? "已认领，飞书任务已创建"
-                                           : "飞书任务已创建：\(todo.text.prefix(14))…\(note)")
-                } else if !note.isEmpty {
-                    showToast(note)
+                if assignToSelf, current.id == meetingID,
+                   let i = dtodos.firstIndex(where: { $0.id == todo.id }) {
+                    dtodos[i].owner = userName.isEmpty ? "我" : userName
+                    dtodos[i].initial = userName.isEmpty ? "我" : userInitial
+                    dtodos[i].color = Theme.green500
                 }
+                refreshDerived()
+                finishTaskCreation(key: key, succeeded: true, quiet: quiet,
+                                   message: assignToSelf ? "已认领，飞书任务已创建"
+                                                        : "飞书任务已创建：\(todo.text.prefix(14))…\(note)")
             } catch {
-                showToast("创建飞书任务失败：\(error.localizedDescription)")
+                finishTaskCreation(key: key, succeeded: false, quiet: quiet,
+                                   message: "创建飞书任务失败：\(error.localizedDescription)")
             }
+        }
+    }
+
+    private func finishTaskCreation(key: String, succeeded: Bool, quiet: Bool, message: String) {
+        creatingTaskKeys.remove(key)
+        guard quiet else {
+            showToast(message)
+            return
+        }
+        if succeeded { bulkTaskCreationSucceeded += 1 } else { bulkTaskCreationFailed += 1 }
+        bulkTaskCreationRemaining = max(0, bulkTaskCreationRemaining - 1)
+        guard bulkTaskCreationRemaining == 0 else { return }
+        if bulkTaskCreationFailed == 0 {
+            showToast("已创建 \(bulkTaskCreationSucceeded) 个飞书任务")
+        } else {
+            showToast("已创建 \(bulkTaskCreationSucceeded) 个，失败 \(bulkTaskCreationFailed) 个；失败项可重试")
         }
     }
 
     // cross-meeting todos
     func toggleCtodo(_ id: Int) {
         guard let i = ctodos.firstIndex(where: { $0.id == id }) else { return }
+        guard ctodos[i].status != .candidate else {
+            openCandidate(ctodos[i])
+            return
+        }
         let key = ctodos[i].key
         if ctodos[i].status == .done {
             ctodos[i].status = (Self.overdueDays(due: ctodos[i].due) ?? 0) > 0 ? .overdue : .doing
@@ -928,6 +1623,12 @@ final class AppStore: ObservableObject {
         }
         saveDoneKeys()
         refreshDerived()
+    }
+
+    /// 自动抽取的行动项只是候选；集中页点击后回到原会议确认，不能直接当成已完成任务。
+    func openCandidate(_ todo: CrossTodo) {
+        guard let i = meetings.firstIndex(where: { todo.key.hasPrefix("\($0.id)|") }) else { return }
+        selectMeeting(i)
     }
 
     func toggleFitem(_ id: Int) {
@@ -1294,43 +1995,6 @@ final class AppStore: ObservableObject {
         }
     }
 
-    // MARK: - 转发到群（真发 · 缺 scope 时给出授权指引）
-
-    func forward(to chat: Lark.Chat) {
-        send(markdown: AppStore.noteMarkdown(current), to: chat, what: "纪要")
-    }
-
-    func send(markdown: String, to chat: Lark.Chat, what: String) {
-        showToast("正在发到「\(chat.name)」…")
-        Task {
-            do {
-                try await Lark.sendMarkdown(chatID: chat.id, markdown: markdown)
-                showToast("\(what)已发到「\(chat.name)」")
-            } catch {
-                if Lark.isMissingScope(error) {
-                    showToast("需要授权：请在终端运行 lark-cli auth login 开通消息发送权限")
-                } else {
-                    showToast("发送失败：\(error.localizedDescription)")
-                }
-            }
-        }
-    }
-
-    /// 会前追问卡的 markdown（发群用）。
-    static func followupMarkdown(_ card: RecurringCard) -> String {
-        let done = card.items.filter { $0.done }
-        let open = card.items.filter { !$0.done }
-        var lines = ["**「\(card.title)」上次待办进度** （\(card.prevMeta)）", ""]
-        lines.append("已完成 \(done.count) · 未动 \(open.count)")
-        lines.append("")
-        for i in card.items {
-            lines.append("- \(i.done ? "✅" : "⏳") \(i.text)（\(i.owner)）")
-        }
-        lines.append("")
-        lines.append("—— Aftermeet · 会前盘点")
-        return lines.joined(separator: "\n")
-    }
-
     /// 追问卡上勾选：把对应的跨会议待办翻转（按文本匹配上一场会的那条）。
     func toggleFollowItem(text: String, meetingTitle: String) {
         if let i = ctodos.firstIndex(where: { $0.text == text && $0.meeting.hasPrefix(meetingTitle) }) {
@@ -1338,48 +2002,14 @@ final class AppStore: ObservableObject {
         }
     }
 
-    /// 把当前纪要排成飞书 markdown。
-    static func noteMarkdown(_ m: MeetingVM) -> String {
-        var lines = ["**\(m.title)**", ""]
-        for b in m.displayBlocks {
-            switch b.type {
-            case "summary":
-                if let t = b.text { lines.append(t); lines.append("") }
-            case "decisions":
-                if let it = b.items, !it.isEmpty {
-                    lines.append("**结论与决策**")
-                    lines += it.map { "- " + $0.replacingOccurrences(of: "|", with: " ") }
-                    lines.append("")
-                }
-            case "keyPoints":
-                if let it = b.items, !it.isEmpty {
-                    lines.append("**要点**")
-                    lines += it.map { "- \($0)" }
-                    lines.append("")
-                }
-            case "disputes":
-                if let it = b.items, !it.isEmpty {
-                    lines.append("**分歧与未决**")
-                    lines += it.map { "- " + $0.replacingOccurrences(of: "|", with: "：") }
-                    lines.append("")
-                }
-            default: break
-            }
-        }
-        let todos = m.dtodos
-        if !todos.isEmpty {
-            lines.append("**待办**")
-            lines += todos.map { "- \($0.text)（\($0.owner ?? "待认领")\($0.due == "—" ? "" : " · \($0.due)")）" }
-        }
-        lines.append("")
-        lines.append("—— Aftermeet")
-        return lines.joined(separator: "\n")
-    }
-
     // derived
-    var openCount: Int { ctodos.filter { $0.status != .done }.count }
+    var candidateCount: Int { ctodos.filter { $0.status == .candidate }.count }
+    var officialTodos: [CrossTodo] { ctodos.filter { $0.status != .candidate } }
+    var openCount: Int { officialTodos.filter { $0.status != .done }.count }
     var crossDone: Int { ctodos.filter { $0.status == .done }.count }
-    var closeRatePct: Int { ctodos.isEmpty ? 0 : Int((Double(crossDone) / Double(ctodos.count) * 100).rounded()) }
+    var closeRatePct: Int {
+        officialTodos.isEmpty ? 0 : Int((Double(crossDone) / Double(officialTodos.count) * 100).rounded())
+    }
     var pendingCount: Int { dtodos.filter { $0.status == .pending }.count }
     var unclaimedCount: Int { dtodos.filter { $0.status == .unclaimed }.count }
 

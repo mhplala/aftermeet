@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "questions": [
+    {
+      "id": "synthetic-temporal-metric",
+      "capability": "temporal",
+      "question": "纸鸢项目的次日留存从月初到月中怎么变化？",
+      "expectedAnswerContains": ["42%", "47%", "9月1日", "9月15日"],
+      "expectedMeetingIDs": ["synthetic-metric-v1", "synthetic-metric-v2"],
+      "mustCite": true,
+      "shouldRefuse": false
+    },
+    {
+      "id": "synthetic-insufficient-owner",
+      "capability": "insufficient_evidence",
+      "question": "谁负责松果计划下一轮复盘？",
+      "expectedAnswerContains": [],
+      "expectedMeetingIDs": ["synthetic-short-decision"],
+      "mustCite": true,
+      "shouldRefuse": true
+    }
+  ]
+}
