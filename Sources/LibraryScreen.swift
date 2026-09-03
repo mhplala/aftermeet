@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct TranscriptFile: Identifiable {
+struct TranscriptFile: Identifiable, Sendable {
     let id = UUID()
     let url: URL          // first fragment (for "reveal in Finder")
     let title: String
@@ -23,8 +23,13 @@ struct LibraryScreen: View {
             // Lazy 嵌套 Lazy 会退化成全量 measureEstimates，几千段落直接卡死主线程。
             VStack(alignment: .leading, spacing: 0) {
                 header
-                tabs.padding(.top, 18).padding(.bottom, 6)
                 if store.libraryRawTab {
+                    Button { store.libraryRawTab = false } label: {
+                        Label("返回会议", systemImage: "chevron.left")
+                            .font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
                     TranscriptArchiveView()
                 } else {
                     notesList
@@ -37,51 +42,10 @@ struct LibraryScreen: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Overline("全部会议", tracking: 1.2).padding(.bottom, 8)
-                    Text("会议库")
-                        .font(Theme.display(36, .semibold)).tracking(-0.8)
-                        .foregroundColor(Theme.inkPrimary)
-                }
-                Spacer()
-                Text(store.libraryRawTab
-                     ? "本地存档 · 仅保存在本机"
-                     : "\(store.meetings.count) 场 · \(store.ctodos.count) 条待办")
-                    .font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
-            }
-        }
-    }
-
-    private var tabs: some View {
-        HStack(spacing: 2) {
-            tab("纪要", raw: false)
-            tab("原始转写", raw: true)
-        }
-        .padding(3)
-        .background(Theme.paper300.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous)
-            .strokeBorder(Theme.glassBorder, lineWidth: 1))
-        .fixedSize()
-    }
-
-    private func tab(_ label: String, raw: Bool) -> some View {
-        let on = store.libraryRawTab == raw
-        return Button {
-            withAnimation(.easeOut(duration: 0.15)) { store.libraryRawTab = raw }
-        } label: {
-            Text(label)
-                .font(Theme.ui(12.5, .semibold))
-                .foregroundColor(on ? Theme.inkPrimary : Theme.inkSecondary)
-                .padding(.horizontal, 18).padding(.vertical, 8)
-                .background(on ? Theme.glassFillStrong : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rMD - 1, style: .continuous))
-                .shadow(color: on ? Color.black.opacity(0.10) : .clear, radius: 4, x: 0, y: 2)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        Text(store.libraryRawTab ? "转写档案" : "会议")
+            .font(Theme.display(36, .semibold)).tracking(-0.8)
+            .foregroundColor(Theme.inkPrimary)
+            .padding(.bottom, 12)
     }
 
     // MARK: - 纪要 tab
@@ -96,7 +60,7 @@ struct LibraryScreen: View {
             .padding(.top, 14)
         } else {
             ForEach(store.meetingsByDay, id: \.day) { group in
-                dayHeader(group.day, count: group.items.count)
+                dayHeader(group.day)
                 Card(padding: 0) {
                     VStack(spacing: 0) {
                         ForEach(Array(group.items.enumerated()), id: \.element.id) { idx, m in
@@ -112,7 +76,7 @@ struct LibraryScreen: View {
             // dayChip 解析不出的（样例等）兜底一组
             let undated = store.meetings.filter { $0.dayChip == "·" }
             if !undated.isEmpty {
-                dayHeader("未标日期", count: undated.count)
+                dayHeader("未标日期")
                 Card(padding: 0) {
                     VStack(spacing: 0) {
                         ForEach(Array(undated.enumerated()), id: \.element.id) { idx, m in
@@ -128,25 +92,14 @@ struct LibraryScreen: View {
         }
     }
 
-    private func dayHeader(_ day: String, count: Int) -> some View {
-        HStack(spacing: 6) {
-            Text(day).font(Theme.mono(11, .semibold)).foregroundColor(Theme.inkPrimary)
-            Text("· \(count) 场").font(Theme.mono(10.5)).foregroundColor(Theme.inkTertiary)
-        }
+    private func dayHeader(_ day: String) -> some View {
+        Text(day).font(Theme.mono(11, .semibold)).foregroundColor(Theme.inkPrimary)
         .padding(.top, 18).padding(.bottom, 8)
     }
 
     private func row(_ m: MeetingVM, last: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 13) {
-                Text(m.dayChip)
-                    .font(Theme.mono(11.5, .semibold))
-                    .foregroundColor(Theme.accentInk)
-                    .frame(width: 36, height: 36)
-                    .background(Theme.warmWhite2)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
-                        .strokeBorder(Theme.glassBorder, lineWidth: 1))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(m.title)
                         .font(Theme.ui(13.5, .medium)).foregroundColor(Theme.inkPrimary).lineLimit(1)
@@ -154,9 +107,6 @@ struct LibraryScreen: View {
                 }
                 Spacer()
                 Pill(text: statusLabel(m).0, bg: statusLabel(m).1, fg: statusLabel(m).2, size: 10.5)
-                Text(m.id.hasPrefix("live-") ? "本地" : "飞书同步")
-                    .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
-                    .frame(width: 52, alignment: .trailing)
             }
             .padding(.vertical, 12).padding(.horizontal, 8)
             .contentShape(Rectangle())
@@ -166,14 +116,20 @@ struct LibraryScreen: View {
 
     /// 状态标：待确认 > 待认领 > 已确认/闭环进度
     private func statusLabel(_ m: MeetingVM) -> (String, Color, Color) {
-        let todos = m.dtodos
-        let pending = todos.filter { $0.status == .pending }.count
-        let unclaimed = todos.filter { $0.status == .unclaimed }.count
-        let done = todos.filter { $0.status == .confirmed }.count
+        if m.displayBlocks.contains(where: { $0.type == "refinePending" }) {
+            return ("生成中", Theme.blue50, Theme.blue700)
+        }
+        if m.displayBlocks.contains(where: { $0.type == "refineFailed" }) {
+            return ("生成失败", Theme.danger50, Theme.danger500)
+        }
+        let todos = store.ctodos.filter { $0.key.hasPrefix("\(m.id)|") }
+        let pending = todos.filter { $0.status == .candidate }.count
+        let open = todos.filter { $0.status == .doing || $0.status == .overdue }.count
+        let done = todos.filter { $0.status == .done }.count
         if pending > 0 { return ("待确认 \(pending)", Theme.warn50, Theme.warn500) }
-        if unclaimed > 0 { return ("待认领 \(unclaimed)", Theme.warn50, Theme.warn500) }
+        if open > 0 { return ("进行中 \(open)", Theme.blue50, Theme.blue700) }
         if todos.isEmpty { return ("无待办", Theme.warmWhite2, Theme.inkSecondary) }
-        return ("已确认 \(done)/\(todos.count)", Theme.green50, Theme.green700)
+        return ("已完成 \(done)", Theme.green50, Theme.green700)
     }
 
     private func openMeeting(_ m: MeetingVM) {
@@ -192,7 +148,7 @@ struct TranscriptArchiveView: View {
     @State private var selected: TranscriptFile?
     @State private var loading = true
 
-    static var dir: URL {
+    nonisolated static var dir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AfterMeet/transcripts")
     }
@@ -342,7 +298,7 @@ struct TranscriptArchiveView: View {
 
     private struct Frag { let url: URL; let start: Date; let end: Date; let name: String; let dateStr: String; let body: String }
 
-    static func loadFiles() -> [TranscriptFile] {
+    nonisolated static func loadFiles() -> [TranscriptFile] {
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: Self.dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         let dd = DateFormatter(); dd.locale = Locale(identifier: "zh_CN"); dd.dateFormat = "M月d日 HH:mm"
@@ -395,7 +351,7 @@ struct TranscriptArchiveView: View {
         }.reversed()
     }
 
-    private static func startFromFilename(_ url: URL) -> Date? {
+    nonisolated private static func startFromFilename(_ url: URL) -> Date? {
         let s = url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "会中转写-", with: "")
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd-HHmmss"; df.timeZone = .current
         return df.date(from: s)

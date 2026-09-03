@@ -17,10 +17,9 @@ struct TodosScreen: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Overline("跨会议 · 任务闭环", tracking: 1.2).padding(.bottom, 8)
-            Text("待办中心")
+            Text("行动项")
                 .font(Theme.display(38, .medium)).tracking(-0.9).foregroundColor(Theme.inkPrimary)
-            Text("所有会议的待办集中在这里，完成情况实时计入闭环率。")
+            Text("自动提取的内容先确认，再成为正式任务。")
                 .font(Theme.display(15, .regular))
                 .foregroundColor(Theme.inkSecondary).padding(.top, 8)
         }
@@ -29,16 +28,13 @@ struct TodosScreen: View {
     private var filterRow: some View {
         HStack(spacing: 10) {
             HStack(spacing: 2) {
-                pill("全部 \(store.ctodos.count)", .all)
-                pill("未完成 \(openN)", .open)
-                pill("逾期 \(overN)", .overdue)
+                pill("待确认 \(candidateN)", .candidates)
+                pill("进行中 \(openN)", .open)
                 pill("已完成 \(doneN)", .done)
             }
             .padding(3)
             .background(Theme.warmWhite2)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
-            Spacer()
-            Text("闭环率 \(closeRate)%").font(Theme.mono(11.5)).foregroundColor(Theme.inkTertiary)
         }
     }
 
@@ -58,9 +54,17 @@ struct TodosScreen: View {
     }
 
     private var list: some View {
-        LazyVStack(spacing: 0) {
-            ForEach(Array(visible.enumerated()), id: \.element.id) { idx, t in
-                CrossTodoRow(todo: t, last: idx == visible.count - 1)
+        Group {
+            if visible.isEmpty {
+                EmptyState(icon: emptyIcon, title: emptyTitle, message: emptyMessage)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 36)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { idx, t in
+                        CrossTodoRow(todo: t, last: idx == visible.count - 1)
+                    }
+                }
             }
         }
         .background(Theme.white)
@@ -72,16 +76,19 @@ struct TodosScreen: View {
     // derived
     private var visible: [CrossTodo] {
         switch store.filter {
-        case .all:     return store.ctodos
-        case .open:    return store.ctodos.filter { $0.status != .done }
-        case .overdue: return store.ctodos.filter { $0.status == .overdue }
+        case .candidates: return store.ctodos.filter { $0.status == .candidate }
+        case .open:    return store.officialTodos.filter { $0.status != .done }
         case .done:    return store.ctodos.filter { $0.status == .done }
         }
     }
-    private var openN: Int { store.ctodos.filter { $0.status != .done }.count }
-    private var overN: Int { store.ctodos.filter { $0.status == .overdue }.count }
+    private var candidateN: Int { store.candidateCount }
+    private var openN: Int { store.openCount }
     private var doneN: Int { store.ctodos.filter { $0.status == .done }.count }
-    private var closeRate: Int { store.ctodos.isEmpty ? 0 : Int((Double(doneN) / Double(store.ctodos.count) * 100).rounded()) }
+    private var emptyIcon: String { store.filter == .candidates ? "checkmark.seal" : "checkmark.circle" }
+    private var emptyTitle: String { store.filter == .candidates ? "没有待确认内容" : "这里暂时为空" }
+    private var emptyMessage: String {
+        store.filter == .candidates ? "新会议提取出的行动项会先出现在这里。" : "确认后的任务会按进度显示。"
+    }
 }
 
 // MARK: - Cross-meeting todo row
@@ -93,14 +100,23 @@ struct CrossTodoRow: View {
     @State private var hover = false
 
     private var done: Bool { todo.status == .done }
+    private var candidate: Bool { todo.status == .candidate }
     /// 搜索跳转的落点：闪一下这一行
     private var flashing: Bool { store.flashTodoText == todo.text }
 
     var body: some View {
-        Button { store.toggleCtodo(todo.id) } label: {
+        Button {
+            candidate ? store.openCandidate(todo) : store.toggleCtodo(todo.id)
+        } label: {
             VStack(spacing: 0) {
                 HStack(spacing: 14) {
-                    checkbox
+                    if candidate {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 15)).foregroundColor(Theme.warn500)
+                            .frame(width: 20)
+                    } else {
+                        checkbox
+                    }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(todo.text)
                             .font(Theme.ui(14))
@@ -110,17 +126,25 @@ struct CrossTodoRow: View {
                         Text(todo.meeting).font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
                     }
                     Spacer(minLength: 8)
-                    HStack(spacing: 7) {
-                        Avatar(initial: todo.initial, color: todo.color, size: 24)
-                        Text(todo.owner).font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
+                    if candidate {
+                        Text("去确认")
+                            .font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.warn500)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold)).foregroundColor(Theme.inkMuted)
+                    } else {
+                        if todo.owner != "待认领" {
+                            Text(todo.owner).font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
+                                .frame(width: 80, alignment: .leading)
+                        }
+                        if todo.status == .done || todo.due != "—" {
+                            Text(dueLabel)
+                                .font(Theme.ui(11, .semibold)).foregroundColor(dueFg)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .frame(width: 78)
+                                .background(dueBg)
+                                .clipShape(Capsule())
+                        }
                     }
-                    .frame(width: 120, alignment: .leading)
-                    Text(dueLabel)
-                        .font(Theme.ui(11, .semibold)).foregroundColor(dueFg)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .frame(width: 78)
-                        .background(dueBg)
-                        .clipShape(Capsule())
                 }
                 .padding(.horizontal, 22).padding(.vertical, 15)
                 .background(flashing ? Theme.blue50
@@ -154,6 +178,7 @@ struct CrossTodoRow: View {
 
     private var dueLabel: String {
         switch todo.status {
+        case .candidate: return "待确认"
         case .overdue: return "逾期·\(todo.due)"
         case .done:    return "已完成"
         case .doing:   return todo.due
@@ -161,6 +186,7 @@ struct CrossTodoRow: View {
     }
     private var dueBg: Color {
         switch todo.status {
+        case .candidate: return Theme.warn50
         case .overdue: return Theme.danger50
         case .done:    return Theme.green50
         case .doing:   return Theme.warmWhite2
@@ -168,6 +194,7 @@ struct CrossTodoRow: View {
     }
     private var dueFg: Color {
         switch todo.status {
+        case .candidate: return Theme.warn500
         case .overdue: return Theme.danger500
         case .done:    return Theme.green700
         case .doing:   return Theme.inkSecondary

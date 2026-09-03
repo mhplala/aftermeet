@@ -15,55 +15,39 @@ struct Sidebar: View {
             NavItem(icon: "house", label: "概览",
                     active: store.screen == .home) { store.go(.home) }
 
-            group("会议")
-            NavItem(icon: "books.vertical", label: "会议库", badge: "\(store.meetings.count)",
-                    active: store.screen == .library || store.screen == .detail) { store.go(.library) }
-            NavItem(icon: "calendar", label: "日历",
-                    active: store.screen == .calendar) { store.go(.calendar) }
-
-            group("跟进")
-            NavItem(icon: "checklist", label: "待办中心", badge: "\(store.openCount)",
-                    badgeColor: Theme.accent, badgeWeight: .semibold,
+            NavItem(icon: "books.vertical", label: "会议",
+                    active: store.screen == .library || store.screen == .detail) {
+                store.libraryRawTab = false
+                store.go(.library)
+            }
+            if store.knowledgeEnabled {
+                NavItem(
+                    icon: "brain.head.profile",
+                    label: "知识",
+                    badge: store.knowledgeBadge,
+                    badgeColor: store.knowledgeAttentionCount > 0 ? Theme.warn500 : Theme.inkTertiary,
+                    badgeWeight: store.knowledgeAttentionCount > 0 ? .semibold : .regular,
+                    active: store.screen == .knowledge
+                ) { store.go(.knowledge) }
+            }
+            NavItem(icon: "checklist", label: "行动项",
                     active: store.screen == .todos) { store.go(.todos) }
-            NavItem(icon: "clock.arrow.circlepath", label: "会前追问",
-                    active: store.screen == .followup) { store.go(.followup) }
-
-            group("回顾")
-            NavItem(icon: "sun.max", label: "每日综述",
+            NavItem(icon: "sun.max", label: "每日总结",
                     active: store.screen == .daily) { store.go(.daily) }
-            NavItem(icon: "chart.line.uptrend.xyaxis", label: "周报",
-                    active: store.screen == .weekly) { store.go(.weekly) }
-
-            group("账户")
+            Color.clear.frame(height: 8)
             NavItem(icon: "gearshape", label: "设置",
                     active: store.screen == .settings) { store.go(.settings) }
-            NavItem(icon: "sparkles", label: "接入引导", active: false) {
-                store.obStep = 0
-                store.showOnboarding = true
-            }
 
             Spacer()
-
-            statusCard
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 20)
-        .frame(width: 248)
+        .frame(width: 220)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(VisualEffect(material: .sidebar))   // 系统玻璃，不叠自定义色
         .overlay(alignment: .trailing) {
             Rectangle().fill(Theme.borderWhisper).frame(width: 1)
         }
-    }
-
-    private func group(_ title: String) -> some View {
-        Text(title)
-            .font(Theme.mono(10, .semibold))
-            .tracking(1.1)
-            .foregroundColor(Theme.inkMuted)
-            .padding(.horizontal, 8)
-            .padding(.top, 16)
-            .padding(.bottom, 4)
     }
 
     private var logo: some View {
@@ -85,45 +69,6 @@ struct Sidebar: View {
         }
     }
 
-    private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Circle().fill(Theme.accentGlow).frame(width: 7, height: 7)
-                Text(store.sync.syncing ? "正在同步飞书会议…" : "自动记录已开启")
-                    .font(Theme.ui(11.5, .medium))
-                    .foregroundColor(Theme.inkPrimary)
-                Spacer()
-            }
-            Text("飞书纪要每 15 分钟自动同步")
-                .font(Theme.ui(11))
-                .foregroundColor(Theme.inkTertiary)
-            HStack {
-                Button { store.syncNow() } label: {
-                    Text("立即同步")
-                        .font(Theme.ui(10.5, .semibold))
-                        .foregroundColor(Theme.inkSecondary)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Theme.warmWhite)
-                        .clipShape(Capsule())
-                        .overlay(Capsule().strokeBorder(Theme.borderWhisper, lineWidth: 1))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(store.sync.syncing)
-                Spacer()
-                if !store.sync.lastSyncLabel.isEmpty {
-                    Text(store.sync.lastSyncLabel)
-                        .font(Theme.mono(9)).foregroundColor(Theme.inkMuted)
-                }
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.glassFill)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rMD + 2, style: .continuous)
-            .strokeBorder(Theme.borderWhisper, lineWidth: 1))
-    }
 }
 
 // MARK: - Nav item
