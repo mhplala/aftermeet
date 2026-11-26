@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import zlib
 
 /// One finalized or in-progress sentence from the cloud recognizer.
@@ -21,18 +22,43 @@ protocol CloudASRSessionDelegate: AnyObject {
 
 struct CloudASRError: LocalizedError {
     let message: String
+    let isRetryable: Bool
+    init(message: String, isRetryable: Bool = true) {
+        self.message = message
+        self.isRetryable = isRetryable
+    }
     var errorDescription: String? { message }
 }
 
-/// AfterMeet's own device-quota proxy (server/aftermeet-asr-proxy) → Volcengine 豆包语音识别
-/// 大模型 2.0 双向流式（bigmodel_async）。Real Volcengine key never ships in this app; the proxy
-/// injects it server-side, gated by the same SikuCloud device-token pattern Refine.swift uses.
+enum CloudASRMode: String, CaseIterable {
+    case direct
+    case proxy
+}
+
+/// Volcengine 豆包语音识别大模型 2.0 双向流式（bigmodel_async）。
+///
+/// 国内用户可直连火山官方入口，API Key 只放 macOS Keychain；对外发布时仍可切回
+/// AfterMeet 代理，由服务端持有火山密钥并做用量控制。
 enum CloudASRConfig {
-    /// Baked in so every downloaded build gets cloud transcription with zero setup — mirrors
-    /// SikuCloud's "zero-config device quota" pitch for the LLM leg. Only a weak per-device
-    /// burst rate limit guards it server-side (no real daily/total quota yet); Settings can
-    /// still override to a different Worker, or disable cloud entirely via `isEnabled`.
+    static let modeKey = "cloudASRMode"
+    static let directBaseURL = "https://openspeech.bytedance.com"
+    static let directPath = "/api/v3/sauc/bigmodel_async"
+    static let directResourceID = "volc.seedasr.sauc.duration"
+    static let directAppIDKey = "cloudASRVolcAppID"
+
+    /// 新版控制台只发一枚 X-Api-Key；旧版语音控制台则发 App ID + Access Token。
+    /// App ID 不是秘密，放 UserDefaults；Key / Token 始终只进 Keychain。
+    static var directAppID: String {
+        UserDefaults.standard.string(forKey: directAppIDKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    /// 保留零配置代理作为兼容选项；旧版没有 mode 时仍按 proxy 运行，不会在升级后突然丢掉云端转写。
     static let defaultBaseURL = "https://aftermeet-asr-proxy-production.mhplala.workers.dev"
+
+    static var mode: CloudASRMode {
+        CloudASRMode(rawValue: UserDefaults.standard.string(forKey: modeKey) ?? "proxy") ?? .proxy
+    }
 
     /// Explicit opt-out — default on (key absent = enabled) so emptying the address field below
     /// can't silently re-enable a stale/wrong override; this is the one true "off" switch.
@@ -47,18 +73,103 @@ enum CloudASRConfig {
         UserDefaults.standard.bool(forKey: "cloudASRNeverFallback")
     }
 
-    static var baseURL: String {
+    /// 官方直连失败通常是当前网络不可用，快速切本地避免会议开头空白；
+    /// 代理链路较长，保留原来的宽松重试窗口。
+    static var maxReconnectAttempts: Int { mode == .direct ? 2 : 5 }
+
+    static var proxyBaseURL: String {
         let v = (UserDefaults.standard.string(forKey: "cloudASRBaseURL") ?? "").trimmingCharacters(in: .whitespaces)
         return v.isEmpty ? defaultBaseURL : v
     }
-    static var isConfigured: Bool { isEnabled && !baseURL.isEmpty }
+    static var isConfigured: Bool {
+        guard isEnabled else { return false }
+        switch mode {
+        case .direct: return directAPIKey?.isEmpty == false
+        case .proxy: return !proxyBaseURL.isEmpty
+        }
+    }
 
     static var webSocketURL: URL? {
-        guard !baseURL.isEmpty, var c = URLComponents(string: baseURL) else { return nil }
-        c.scheme = (c.scheme == "http") ? "ws" : "wss"
-        c.path = "/v1/transcribe-stream"
-        c.query = nil
-        return c.url
+        switch mode {
+        case .direct:
+            guard var c = URLComponents(string: directBaseURL) else { return nil }
+            c.scheme = "wss"
+            c.path = directPath
+            return c.url
+        case .proxy:
+            guard !proxyBaseURL.isEmpty, var c = URLComponents(string: proxyBaseURL) else { return nil }
+            c.scheme = (c.scheme == "http") ? "ws" : "wss"
+            c.path = "/v1/transcribe-stream"
+            c.query = nil
+            return c.url
+        }
+    }
+
+    static func authorize(_ request: inout URLRequest) throws {
+        switch mode {
+        case .direct:
+            guard let key = directAPIKey, !key.isEmpty else {
+                throw CloudASRError(message: "请先在设置中保存火山引擎 API Key / Access Token",
+                                    isRetryable: false)
+            }
+            let requestID = UUID().uuidString.lowercased()
+            if directAppID.isEmpty {
+                request.setValue(key, forHTTPHeaderField: "X-Api-Key")
+            } else {
+                request.setValue(directAppID, forHTTPHeaderField: "X-Api-App-Key")
+                request.setValue(key, forHTTPHeaderField: "X-Api-Access-Key")
+            }
+            request.setValue(directResourceID, forHTTPHeaderField: "X-Api-Resource-Id")
+            request.setValue(requestID, forHTTPHeaderField: "X-Api-Request-Id")
+            request.setValue(requestID, forHTTPHeaderField: "X-Api-Connect-Id")
+        case .proxy:
+            request.setValue("Bearer \(SikuCloud.deviceToken)", forHTTPHeaderField: "Authorization")
+            request.setValue(SikuCloud.appSecret, forHTTPHeaderField: "X-Siku-App")
+        }
+    }
+
+    // MARK: - Keychain
+
+    private static let keychainService = "app.siku.aftermeet"
+    private static let keychainAccount = "volcengine-asr-api-key"
+
+    static var directAPIKey: String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    static func setDirectAPIKey(_ key: String) -> Bool {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+        ]
+        if trimmed.isEmpty {
+            let status = SecItemDelete(base as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+
+        let value = Data(trimmed.utf8)
+        let updateStatus = SecItemUpdate(base as CFDictionary,
+                                         [kSecValueData as String: value] as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
+
+        var add = base
+        add[kSecValueData as String] = value
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 }
 
@@ -102,6 +213,8 @@ final class CloudASRSession: NSObject, URLSessionWebSocketDelegate {
     private var nextAudioSequence: Int32 = 2
     private var isFinishing = false
     private var isCancelled = false
+    private var didReportFailure = false
+    private let failureLock = NSLock()
     private var utterances: [CloudASRUtterance] = []
     private var lastReceivedAt = Date()          // sendQueue-confined
     private var watchdogTimer: DispatchSourceTimer?
@@ -128,8 +241,7 @@ final class CloudASRSession: NSObject, URLSessionWebSocketDelegate {
         Self.dbg("open() url=\(url.absoluteString)")
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
-        request.setValue("Bearer \(SikuCloud.deviceToken)", forHTTPHeaderField: "Authorization")
-        request.setValue(SikuCloud.appSecret, forHTTPHeaderField: "X-Siku-App")
+        try CloudASRConfig.authorize(&request)
 
         let config = URLSessionConfiguration.default
         let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
@@ -282,7 +394,7 @@ final class CloudASRSession: NSObject, URLSessionWebSocketDelegate {
             if let error {
                 let ns = error as NSError
                 Self.dbg("send FAILED: domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
-                self.reportFailure(error)
+                self.reportFailure(self.connectionFailure(from: error))
                 return
             }
             if !self.hasLoggedFirstSend {
@@ -311,9 +423,34 @@ final class CloudASRSession: NSObject, URLSessionWebSocketDelegate {
             case .failure(let error):
                 let ns = error as NSError
                 Self.dbg("receive FAILED: domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
-                if !self.isCancelled { self.reportFailure(error) }
+                if !self.isCancelled { self.reportFailure(self.connectionFailure(from: error)) }
             }
         }
+    }
+
+    /// Foundation otherwise collapses every failed WebSocket upgrade into the unhelpful -1011.
+    /// Preserve the HTTP status and Volcengine log id, and mark auth/entitlement failures permanent
+    /// so CaptureService does not retry the exact same rejected credentials forever.
+    private func connectionFailure(from underlying: Error) -> Error {
+        guard let response = task?.response as? HTTPURLResponse else { return underlying }
+        let status = response.statusCode
+        let logID = response.value(forHTTPHeaderField: "X-Tt-Logid")
+        let suffix = logID.map { " · Log ID \($0)" } ?? ""
+        let detail: String
+        switch status {
+        case 401:
+            detail = "鉴权失败：请检查 API Key，或填写 App ID + Access Token"
+        case 403:
+            detail = "资源未授权：请确认语音识别 2.0 已开通且资源 ID 匹配"
+        case 429:
+            detail = "请求过多或额度已用尽"
+        default:
+            detail = "WebSocket 握手失败"
+        }
+        let retryable = status == 408 || status == 429 || status >= 500
+        Self.dbg("handshake HTTP \(status)\(suffix)")
+        return CloudASRError(message: "云端转写 \(detail)（HTTP \(status)）\(suffix)",
+                             isRetryable: retryable)
     }
 
     private func handleIncoming(_ packet: Data) {
@@ -330,6 +467,10 @@ final class CloudASRSession: NSObject, URLSessionWebSocketDelegate {
 
     private func reportFailure(_ error: Error) {
         guard !isCancelled else { return }
+        failureLock.lock()
+        guard !didReportFailure else { failureLock.unlock(); return }
+        didReportFailure = true
+        failureLock.unlock()
         Self.dbg("reportFailure: \((error as NSError).localizedDescription)")
         DispatchQueue.main.async { self.delegate?.cloudASR(self, didFailWith: error) }
     }
@@ -504,6 +645,10 @@ final class CloudASRSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let response = task.response as? HTTPURLResponse {
+            let logID = response.value(forHTTPHeaderField: "X-Tt-Logid") ?? "-"
+            Self.dbg("HTTP response status=\(response.statusCode) logid=\(logID)")
+        }
         if let error {
             let ns = error as NSError
             Self.dbg("didCompleteWithError: domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")

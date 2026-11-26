@@ -30,7 +30,9 @@ struct RootView: View {
         }
         .animation(.easeOut(duration: 0.2), value: store.showOnboarding)
         .ignoresSafeArea()
-        .task { store.startWatching() }
+        .task {
+            if !AppStore.demoMode { store.startWatching() }
+        }
         .background {   // ⌘[ 返回
             Button("") { store.goBack() }
                 .keyboardShortcut("[", modifiers: .command)
@@ -43,8 +45,10 @@ struct RootView: View {
         switch store.screen {
         case .home:     HomeScreen()
         case .library:  LibraryScreen()
+        case .knowledge: KnowledgeScreen()
         case .calendar: CalendarScreen()
         case .detail:   DetailScreen()
+        case .timeline: MeetingTimelineScreen()
         case .todos:    TodosScreen()
         case .followup: FollowupScreen()
         case .weekly:   WeeklyScreen()

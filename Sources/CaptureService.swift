@@ -46,9 +46,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
     private var cloudSendTimer: Timer?
     private var cloudRetryCount = 0        // main — 连续失败次数，成功收到结果就清零
     private var cloudRetryWork: DispatchWorkItem?
-    /// 退避 1/2/4/8/16s 共 ~31s；仍失败才认为"万不得已"，退回本地。
-    private static let maxCloudRetries = 5
-
+    private var cloudFatalStatus: String?  // 401/403 等配置错误；录制启动完成后也不能把提示覆盖掉
     private var window = [Float]()     // audioQueue — 系统音频（对方的声音）
     private var rate: Double = 48_000  // audioQueue
     private var micWindow = [Float]()  // audioQueue — 麦克风（你的声音，macOS 15+）
@@ -63,7 +61,15 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
     private var lastSegment = ""       // inferQueue — cross-segment de-dup
 
     private var sessionURL: URL?       // live transcript file — appended every commit, survives a crash
+    private var segmentSidecarURL: URL?
     private var recordingURL: URL?     // raw audio backup — written continuously regardless of whether ASR (cloud or local) succeeds
+    private var captureSessionID = UUID().uuidString.lowercased()
+    private var captureStartedAt = Date()
+    private var capturedSegments: [CapturedSegment] = []
+    private var nextCapturedSegmentOrdinal = 0
+    private var cloudSessionOffsetMS = 0
+    private var usedCloudInSession = false
+    private var usedLocalInSession = false
     private var backupAudioFile: AVAudioFile?    // inferQueue-confined
     private var backupAudioFormat: AVAudioFormat?  // inferQueue-confined
     private var tickTimer: Timer?
@@ -92,6 +98,12 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         let title = name.isEmpty ? "未命名会议" : name
         try? "# \(title) · \(sessionHeaderDate)\n\n".data(using: .utf8)?.write(to: url)
         sessionURL = url
+        let sidecar = url.deletingPathExtension().appendingPathExtension("segments.jsonl")
+        if (try? CaptureSidecarStore.create(at: sidecar)) != nil {
+            segmentSidecarURL = sidecar
+        } else {
+            segmentSidecarURL = nil
+        }
 
         let recDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AfterMeet/recordings")
@@ -130,7 +142,10 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
 
     /// User (or calendar) names the meeting — rewrite the file's title line.
     func setMeetingName(_ name: String) {
-        DispatchQueue.main.async { self.meetingName = name }
+        DispatchQueue.main.async {
+            self.meetingName = name
+            MeetingTimelineStore.shared.rename(sessionID: self.captureSessionID, title: name)
+        }
         let url = sessionURL                    // 调用时快照，不能等队列执行时再读当前会话
         let headerDate = sessionHeaderDate
         inferQueue.async {
@@ -177,6 +192,13 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         await MainActor.run {
             self.committed = ""; self.liveText = ""; self.liveLines = []; self.pendingLine = ""
             self.elapsed = 0; self.isCapturing = true; self.isPaused = false; self.status = "启动…"
+            self.captureSessionID = UUID().uuidString.lowercased()
+            self.captureStartedAt = Date()
+            self.capturedSegments = []
+            self.nextCapturedSegmentOrdinal = 0
+            self.cloudSessionOffsetMS = 0
+            self.usedCloudInSession = false
+            self.usedLocalInSession = false
         }
         let cloudReady = CloudASRConfig.isConfigured
         guard cloudReady || Whisper.available() else {
@@ -191,17 +213,25 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         inferQueue.sync { self.emptyStreak = 0; self.lastSegment = "" }
         cloudLastCommittedEnd = 0
         cloudRetryCount = 0
+        cloudFatalStatus = nil
         cloudRetryWork?.cancel(); cloudRetryWork = nil
         cloudReconnecting = false
         dbg("=== start ===", reset: true)
         let detected = LarkCalendar.currentMeetingName() ?? ""   // a suggestion only — not committed
         let path = startSession(name: "")                        // file starts "未命名会议"
-        await MainActor.run { self.savedPath = path; self.meetingName = ""; self.calendarSuggestion = detected }
+        await MainActor.run {
+            self.savedPath = path; self.meetingName = ""; self.calendarSuggestion = detected
+            MeetingTimelineStore.shared.begin(sessionID: self.captureSessionID, title: "",
+                                              startedAt: self.captureStartedAt)
+        }
         if cloudReady { startCloudASR() } else { startLocalFallback() }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let display = content.displays.first else {
-                await MainActor.run { self.status = "找不到可采集的显示器"; self.isCapturing = false }; return
+                await MainActor.run {
+                    self.status = "找不到可采集的显示器"; self.isCapturing = false
+                    MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID, interrupted: true)
+                }; return
             }
             let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
             let cfg = SCStreamConfiguration()
@@ -232,13 +262,17 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             try await s.startCapture()
             stream = s
             await MainActor.run {
-                self.status = self.usingCloud ? "录制中 · 云端转写 · 实时" : "录制中 · Whisper 流式 · 约 1.5 秒刷新"
+                self.status = self.cloudFatalStatus
+                    ?? (self.usingCloud ? "录制中 · 云端转写 · 实时" : "录制中 · Whisper 流式 · 约 1.5 秒刷新")
                 self.startTimers()
             }
         } catch {
             cloudASR?.cancel(); cloudASR = nil
             server.stop()
-            await MainActor.run { self.status = "需要屏幕录制权限：系统设置 › 隐私与安全性 › 屏幕录制，勾选 AfterMeet 后重开。"; self.isCapturing = false }
+            await MainActor.run {
+                self.status = "需要屏幕录制权限：系统设置 › 隐私与安全性 › 屏幕录制，勾选 AfterMeet 后重开。"; self.isCapturing = false
+                MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID, interrupted: true)
+            }
         }
     }
 
@@ -247,12 +281,13 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         let session = CloudASRSession()
         session.delegate = self
         cloudASR = session
-        // 新会话的时间轴从 0 重新开始，去重水位必须跟着归零，
-        // 否则新会话所有分句的 endTime 都小于旧水位，一句都提交不了。
+        // Every reconnect starts a fresh service-local timeline; anchor it to the meeting timeline.
         cloudLastCommittedEnd = 0
+        cloudSessionOffsetMS = max(0, elapsed * 1000)
         do {
             try session.open()
             usingCloud = true
+            usedCloudInSession = true
             cloudReconnecting = false
             if cloudRetryCount > 0 {
                 dbg("cloud reconnected (attempt \(cloudRetryCount))")
@@ -268,13 +303,27 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
     }
 
     /// 云端出问题时的唯一入口：先退避重连，重试都用光了才退回本地（设置里可选"永不退回"）。
-    private func handleCloudFailure(reason: String) {
+    private func handleCloudFailure(reason: String, retryable: Bool = true) {
         guard isCapturing else { return }
+        if !retryable {
+            usingCloud = false
+            cloudReconnecting = false
+            cloudRetryWork?.cancel(); cloudRetryWork = nil
+            dbg("!! permanent cloud failure (\(reason)) — retries stopped")
+            if !CloudASRConfig.neverFallbackToLocal, Whisper.available() {
+                startLocalFallback()
+                cloudFatalStatus = "云端配置错误，已切换本地 · \(reason)"
+            } else {
+                cloudFatalStatus = "云端配置错误，已停止重连 · \(reason)"
+            }
+            status = cloudFatalStatus ?? reason
+            return
+        }
         cloudRetryCount += 1
         usingCloud = false
         cloudRetryWork?.cancel()
 
-        let exhausted = cloudRetryCount > Self.maxCloudRetries
+        let exhausted = cloudRetryCount > CloudASRConfig.maxReconnectAttempts
         if exhausted && !CloudASRConfig.neverFallbackToLocal {
             cloudReconnecting = false
             dbg("!! cloud failed \(cloudRetryCount)x (\(reason)) — falling back to local")
@@ -346,11 +395,12 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         usingCloud = false
         cloudReconnecting = false
         cloudRetryWork?.cancel(); cloudRetryWork = nil
-        guard Whisper.available() else { return }   // 顶部 guard 已经保证至少一条路可用；这里单纯没有本地模型就不启动
+        guard Whisper.available() else { return }
+        usedLocalInSession = true
         server.start()
     }
 
-    func stop() async -> String {
+    func stop() async -> CapturedTranscript {
         let (e, wasReconnecting) = await MainActor.run { () -> (Int, Bool) in
             self.tickTimer?.invalidate(); self.tickTimer = nil
             self.clockTimer?.invalidate(); self.clockTimer = nil
@@ -380,12 +430,29 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         }
         server.stop()
         inferQueue.sync { self.backupAudioFile = nil }   // 显式关闭，落定 WAV 头，别等到下次录制才关
-        return await MainActor.run { () -> String in
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        inferQueue.sync {}   // main commit may enqueue the final sidecar append; wait for it before returning
+        return await MainActor.run { () -> CapturedTranscript in
             self.isCapturing = false
             self.status = "已结束"
             self.liveText = self.committed
             self.pendingLine = ""          // 收尾后没有"还在成形"的句子了
-            return self.committed.trimmingCharacters(in: .whitespaces)
+            MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID)
+            let mode = CaptureTranscriptionMode.resolve(
+                usedCloud: self.usedCloudInSession,
+                usedLocal: self.usedLocalInSession)
+            return CapturedTranscript(
+                text: self.committed.trimmingCharacters(in: .whitespaces),
+                segments: self.capturedSegments,
+                transcriptionMode: mode,
+                sessionID: self.captureSessionID,
+                startedAt: self.captureStartedAt.timeIntervalSince1970,
+                endedAt: Date().timeIntervalSince1970,
+                durationSec: e,
+                transcriptPath: self.sessionURL?.path ?? self.savedPath,
+                segmentSidecarPath: self.segmentSidecarURL?.path)
         }
     }
 
@@ -393,6 +460,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         clockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, self.isCapturing, !self.isPaused else { return }
             self.elapsed += 1
+            MeetingTimelineStore.shared.tick(sessionID: self.captureSessionID, elapsedSec: self.elapsed)
         }
         // 原始录音完全独立于云端/本地 ASR 的消费与成功状态。即使识别引擎卡死，音频仍持续落盘。
         backupFlushTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -477,6 +545,14 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             cloudLastCommittedEnd = u.endTime
             let clean = collapseRepeats(u.text.trimmingCharacters(in: .whitespacesAndNewlines))
             guard !clean.isEmpty else { continue }
+            let range = CaptureTimeline.absoluteRange(
+                sessionOffsetMS: cloudSessionOffsetMS,
+                startMS: u.startTime,
+                endMS: u.endTime,
+                minimumStartMS: capturedSegments.last?.endMS)
+            appendCapturedSegment(
+                clean, startMS: range.lowerBound, endMS: range.upperBound,
+                timingQuality: .exact)
             // 所有转写文件 I/O 都进 inferQueue；并快照 URL，避免自动续录后迟到任务写进下一场。
             if let url = sessionURL { inferQueue.async { self.appendToSession(clean, at: url) } }
             committed += (committed.isEmpty ? "" : " ") + clean
@@ -497,10 +573,38 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         }
     }
 
+    private func appendCapturedSegment(_ text: String,
+                                       startMS: Int?,
+                                       endMS: Int?,
+                                       timingQuality: CaptureTimingQuality) {
+        let previousEnd = capturedSegments.last?.endMS
+        let normalizedStart = startMS.map { max($0, previousEnd ?? $0) }
+        let normalizedEnd = endMS.map { max($0, normalizedStart ?? $0) }
+        let segment = CapturedSegment(
+            id: captureSessionID + ":" + String(nextCapturedSegmentOrdinal),
+            ordinal: nextCapturedSegmentOrdinal,
+            text: text,
+            speaker: nil,
+            startMS: normalizedStart,
+            endMS: normalizedEnd,
+            timingQuality: timingQuality)
+        capturedSegments.append(segment)
+        MeetingTimelineStore.shared.append(segment, sessionID: captureSessionID)
+        nextCapturedSegmentOrdinal += 1
+        if let url = segmentSidecarURL {
+            let record = CapturedSegmentRecord(sessionID: captureSessionID, segment: segment)
+            inferQueue.async {
+                do { try CaptureSidecarStore.append(record, to: url) }
+                catch { self.dbg("segment sidecar write failed: \(error.localizedDescription)") }
+            }
+        }
+    }
+
     func cloudASR(_ session: CloudASRSession, didFailWith error: Error) {
         guard session === cloudASR else { return }   // 旧会话的迟到回调，忽略
         cloudASR?.cancel(); cloudASR = nil
-        handleCloudFailure(reason: (error as NSError).localizedDescription)
+        let retryable = (error as? CloudASRError)?.isRetryable ?? true
+        handleCloudFailure(reason: (error as NSError).localizedDescription, retryable: retryable)
     }
 
     // MARK: - Inference (inferQueue, blocking allowed)
@@ -568,11 +672,20 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             trim(); return
         }
         lastSegment = clean
+        let approximateRange = CaptureTimeline.approximateRange(
+            sessionElapsedSec: sessionElapsed,
+            sampleCount: snap.count,
+            sampleRate: r)
         if let url = sessionURL { appendToSession(clean, at: url) } // persist this segment to disk immediately
         DispatchQueue.main.async {
             self.committed += (self.committed.isEmpty ? "" : " ") + clean
             self.liveText = self.committed
             self.appendLiveLine(clean)     // 本地路径没有"正在成形"的中间态，落一句算一句
+            self.appendCapturedSegment(
+                clean,
+                startMS: approximateRange.lowerBound,
+                endMS: approximateRange.upperBound,
+                timingQuality: .approximate)
         }
         trim()
     }
@@ -717,6 +830,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             let e = self.elapsed
             self.status = "采集中断：\(error.localizedDescription)"
             self.isCapturing = false
+            MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID, interrupted: true)
             self.stream = nil
             self.flushBackupAudio()
             if self.usingCloud, let cloud = self.cloudASR {

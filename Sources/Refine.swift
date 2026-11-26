@@ -26,6 +26,11 @@ struct RefinedNote: Codable {
 
     /// 提炼失败时的兜底：录音必须入库（绝不整场丢弃），块里带 refineFailed 标记，
     /// 详情页据此给「重新生成」入口。标题保持"未命名会议"，打开详情时日历交叉比对会自动改名。
+    static func processing() -> RefinedNote {
+        RefinedNote(title: "未命名会议", todos: [],
+                    blocks: [NoteBlock(type: "refinePending")])
+    }
+
     static func failed(reason: String) -> RefinedNote {
         RefinedNote(title: "未命名会议", todos: [],
                     blocks: [NoteBlock(type: "refineFailed", text: reason)])
@@ -225,9 +230,9 @@ enum Refine {
     你是这场会议的分析伙伴，和用户（会议负责人）基于逐字稿深入讨论这场会。分两种情况：
 
     - 事实类问题（谁说了什么、数字、结论、有没有提到某事）：只用逐字稿里的信息，能引原话/数字就引；确实没有就直说没提到，并补一句逐字稿里最接近的相关内容，别只甩一句"没提到"。
-    - 分析/评价/建议类问题（这会开得怎么样、谁的观点更站得住、哪里没聊透、下一步怎么办）：大胆给出你的判断和洞察，但每个观点都要落在逐字稿的证据上（谁说了什么、哪里绕圈、什么被跳过了）；属于推断的就标明是推断，不虚构没发生的事。
+    - 分析/评价/建议/洞见类问题（这会开得怎么样、谁的观点更站得住、哪里没聊透、下一步怎么办、有什么insights）：不必逐句落回逐字稿证据，可以基于逐字稿内容自由联想、延伸、给判断，也可以带一点你自己的行业经验和猜测；想引用逐字稿依据就引，没有依据也可以直接说这是你的联想，不用为了自证而每句话都找补一个"证据"。
 
-    这是多轮对话，追问时结合上文理解所指（"你自己判断呢"="对上一个问题给出你的判断"）。中文，直接有观点，别客套，别写"作为AI"式免责。
+    这是多轮对话，追问时结合上文理解所指（"你自己判断呢"="对上一个问题给出你的判断"）。中文，直接有观点，别客套，别写"作为AI"式免责。回答里不要用markdown格式（不要标题、加粗、列表符号、代码块），就用自然的口语段落，像聊天一样说话。
     """
 
     /// Free-text Q&A grounded in one meeting's transcript — returns the answer text (not JSON).
@@ -292,9 +297,9 @@ enum Refine {
     }
 
     /// 唯一 LLM 出口：内置服务（设备额度）或 BYOK（用户自己的 OpenAI 兼容端点）。
-    static func chatOnce(system: String, user: String, maxTokens: Int) throws -> String {
+    static func chatOnce(system: String, user: String, maxTokens: Int, timeoutSeconds: Int = 180, jsonOutput: Bool = false) throws -> String {
         let byok = AIBackend.isBYOK
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "model": byok ? AIBackend.model : model,
             "temperature": 0.2,
             "max_tokens": maxTokens,
@@ -303,6 +308,7 @@ enum Refine {
                 ["role": "user", "content": user],
             ],
         ]
+        if jsonOutput { payload["response_format"] = ["type": "json_object"] }
         let body = try JSONSerialization.data(withJSONObject: payload)
 
         let proc = Process()
@@ -310,7 +316,7 @@ enum Refine {
         if byok {
             // 标准 TLS，不做证书豁免；Key 来自钥匙串
             proc.arguments = [
-                "-s", "--max-time", "180",
+                "-s", "--max-time", String(timeoutSeconds),
                 AIBackend.chatURL,
                 "-H", "Authorization: Bearer \(AIBackend.apiKey ?? "")",
                 "-H", "Content-Type: application/json",
@@ -318,7 +324,7 @@ enum Refine {
             ]
         } else {
             proc.arguments = [
-                "-sk", "--max-time", "180",
+                "-sk", "--max-time", String(timeoutSeconds),
                 "https://\(ip)/v1/chat/completions",
                 "-H", "Host: \(host)",
                 "-H", "Authorization: Bearer \(SikuCloud.deviceToken)",

@@ -67,6 +67,22 @@ final class FeishuSync: ObservableObject {
                                                     "--doc", token, "--doc-format", "markdown"], timeout: 120),
                       let content = ((doc["data"] as? [String: Any])?["document"] as? [String: Any])?["content"] as? String,
                       content.count >= 400 else { continue }
+                let titleHint = (it["topic"] as? String) ?? "飞书会议"
+                let source = KnowledgeSegmenter.feishuSourceBundle(
+                    content: content,
+                    meetingID: mid,
+                    docToken: token,
+                    title: titleHint)
+                let sourceSaved = KnowledgeStore.shared.saveSource(
+                    source.document,
+                    segments: source.segments,
+                    meetingTitle: titleHint)
+                if sourceSaved && KnowledgeFeatureFlags.isEnabled {
+                    _ = KnowledgeJobPlanner.planExtraction(
+                        for: source.document,
+                        store: .shared,
+                        enabled: true)
+                }
                 guard let raw = try? await Refine.rawJSON(system: FeishuSync.syncSystem,
                                                           user: "会议逐字稿如下：\n\n" + content),
                       let data = raw.data(using: .utf8),
@@ -74,7 +90,7 @@ final class FeishuSync: ObservableObject {
                 obj["meeting_id"] = mid
                 guard let merged = try? JSONSerialization.data(withJSONObject: obj),
                       let m = try? JSONDecoder().decode(RealMeeting.self, from: merged) else { continue }
-                if RealData.upsert(m) { out.append(m) }        // 逐条入库；失败的不进列表
+                if RealData.upsert(m, fullTranscript: content) { out.append(m) }        // 逐条入库；失败的不进列表
             }
             return out
         }.value

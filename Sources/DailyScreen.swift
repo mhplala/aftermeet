@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 每日综述 — pick a day, see one digest synthesized across ALL that day's meetings (reuses the
+/// 每日总结 — pick a day, see one digest synthesized across ALL that day's meetings (reuses the
 /// generative block renderer), plus the list of meetings that fed it.
 struct DailyScreen: View {
     @EnvironmentObject var store: AppStore
@@ -19,7 +19,7 @@ struct DailyScreen: View {
                 if days.isEmpty {
                     Card(padding: 0) {
                         EmptyState(icon: "sun.max", title: "暂无可汇总的会议",
-                                   message: "有会议纪要后，这里会按天生成综述。")
+                                   message: "有会议纪要后，这里会按天生成总结。")
                     }
                 } else {
                     dayChips
@@ -43,9 +43,9 @@ struct DailyScreen: View {
         VStack(alignment: .leading, spacing: 0) {
             Overline("跨会综合 · 当日全局", tracking: 1.2).padding(.bottom, 8)
             (Text("每日").foregroundColor(Theme.inkPrimary)
-                + Text("综述").foregroundColor(Theme.accent))
+                + Text("总结").foregroundColor(Theme.accent))
                 .font(Theme.display(38, .medium)).tracking(-0.9)
-            Text("将当天所有会议汇总为一份综述：整体进展、跨会共性与全部决策。")
+            Text("将当天所有会议汇总为一份总结：整体进展、跨会共性与全部决策。")
                 .font(Theme.display(15, .regular))
                 .foregroundColor(Theme.inkSecondary).padding(.top, 8)
         }
@@ -82,7 +82,7 @@ struct DailyScreen: View {
         if let b = blocks, !b.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("\(day) · \(current.count) 场会综述")
+                    Text("\(day) · \(current.count) 场会总结")
                         .font(Theme.display(20, .medium)).foregroundColor(Theme.inkPrimary)
                     Spacer()
                     Button { store.generateDigest(day: day, force: true) } label: {
@@ -105,9 +105,9 @@ struct DailyScreen: View {
         } else {
             Card(padding: 0) {
                 VStack(spacing: 12) {
-                    Text("尚未生成 \(day) 的综述").font(Theme.ui(14)).foregroundColor(Theme.inkSecondary)
+                    Text("尚未生成 \(day) 的总结").font(Theme.ui(14)).foregroundColor(Theme.inkSecondary)
                     Button { store.generateDigest(day: day, force: true) } label: {
-                        Text("生成综述").font(Theme.ui(13, .semibold)).foregroundColor(.white)
+                        Text("生成总结").font(Theme.ui(13, .semibold)).foregroundColor(.white)
                             .padding(.horizontal, 18).padding(.vertical, 9)
                             .background(Theme.inkGrad)   // 主按钮：深色转蓝白字；accent 底深色会翻白
                             .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))

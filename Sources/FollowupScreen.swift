@@ -55,7 +55,6 @@ struct FollowupScreen: View {
 struct RecurringCardView: View {
     @EnvironmentObject var store: AppStore
     let card: AppStore.RecurringCard
-    @State private var showForward = false
 
     private var doneN: Int { card.items.filter { $0.done }.count }
     private var notDoneN: Int { card.items.filter { !$0.done }.count }
@@ -176,34 +175,9 @@ struct RecurringCardView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            Text("转发到群后，将 @ 未完成项的负责人。")
-                .font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
-            Spacer()
-            Button { store.showToast("已存为草稿") } label: {
-                Text("存为草稿").font(Theme.ui(13, .semibold)).foregroundColor(Theme.inkPrimary.opacity(0.85))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Theme.white)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
-                    .contentShape(Capsule())
-            }.buttonStyle(.plain).fixedSize()
-            Button { showForward = true } label: {
-                Text("发到会议群").font(Theme.ui(13, .semibold)).foregroundColor(.white)
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                    .background(Theme.inkGrad)
-                    .clipShape(Capsule())
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(.plain).fixedSize()
-            .popover(isPresented: $showForward, arrowEdge: .top) {
-                ForwardPicker(meetingTitle: card.title,
-                              copyMarkdown: AppStore.followupMarkdown(card)) { chat in
-                    showForward = false
-                    store.send(markdown: AppStore.followupMarkdown(card), to: chat, what: "进度追问卡")
-                }
-            }
-        }
+        Text("完成状态会与行动项同步。")
+            .font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 22).padding(.vertical, 15)
         .background(Theme.warmWhite)
     }

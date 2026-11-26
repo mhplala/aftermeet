@@ -1,0 +1,85 @@
+[
+  {
+    "id": "synthetic-short-decision",
+    "title": "松果计划阶段评审",
+    "sensitivity": "normal",
+    "transcript": "[00:00] 甲：本轮转化率是42%，统计窗口是过去七天。[00:18] 乙：决定先维持10%的试验流量，下周三再复盘。[00:31] 甲：负责人暂时没有确定。",
+    "expectations": {
+      "facts": ["转化率为42%，窗口为过去七天"],
+      "decisions": ["维持10%的试验流量"],
+      "ownersMustRemainNull": true,
+      "dueText": "下周三"
+    }
+  },
+  {
+    "id": "synthetic-explicit-action",
+    "title": "松果计划执行同步",
+    "sensitivity": "normal",
+    "transcript": "[00:00] 甲：请乙在9月15日前完成三组访谈，并在下一次会议汇报。乙：收到，我负责。",
+    "expectations": {
+      "actions": ["完成三组访谈"],
+      "owner": "乙",
+      "dueText": "9月15日"
+    }
+  },
+  {
+    "id": "synthetic-negation",
+    "title": "远山功能方案讨论",
+    "sensitivity": "normal",
+    "transcript": "[00:00] 甲：今天没有批准全量发布，也没有决定停止试验。我们只同意继续收集数据。",
+    "expectations": {
+      "decisions": ["继续收集数据"],
+      "mustNotContain": ["批准全量发布", "决定停止试验"]
+    }
+  },
+  {
+    "id": "synthetic-metric-v1",
+    "title": "纸鸢项目月初复盘",
+    "sensitivity": "normal",
+    "transcript": "[00:00] 甲：截至9月1日，次日留存是42%，口径只包含新用户。",
+    "expectations": {
+      "metric": {"name": "次日留存", "value": 42, "unit": "%", "validAt": "9月1日"}
+    }
+  },
+  {
+    "id": "synthetic-metric-v2",
+    "title": "纸鸢项目月中复盘",
+    "sensitivity": "normal",
+    "transcript": "[00:00] 甲：截至9月15日，次日留存更新为47%，口径仍然只包含新用户。",
+    "expectations": {
+      "metric": {"name": "次日留存", "value": 47, "unit": "%", "validAt": "9月15日"},
+      "mustNotMergeWith": "synthetic-metric-v1"
+    }
+  },
+  {
+    "id": "synthetic-conflict",
+    "title": "远山功能范围对齐",
+    "sensitivity": "normal",
+    "transcript": "[00:00] 甲：我建议只支持桌面端。乙：我不同意，移动端必须同时支持。丙：今天先不拍板，下周拿成本评估再决定。",
+    "expectations": {
+      "openQuestions": ["是否同时支持移动端"],
+      "dispute": true,
+      "mustNotCreateDecision": true
+    }
+  },
+  {
+    "id": "synthetic-restricted-review",
+    "title": "虚构团队绩效校准",
+    "sensitivity": "restricted",
+    "transcript": "[00:00] 甲：这是虚构测试数据。今天讨论的人员评价只用于测试敏感级别，不应进入普通跨会议问答。",
+    "expectations": {
+      "sensitivity": "restricted",
+      "excludedFromDefaultGlobalQA": true
+    }
+  },
+  {
+    "id": "synthetic-mixed-language",
+    "title": "Northstar 实验复盘",
+    "sensitivity": "normal",
+    "transcript": "[00:00] A: The control group stayed at 12 percent. [00:10] 乙：实验组是15%，但样本不足，所以不能下结论。",
+    "expectations": {
+      "facts": ["control group为12%", "实验组为15%"],
+      "mustNotCreateDecision": true
+    }
+  }
+]

@@ -266,16 +266,16 @@ private struct NextAgendaBlock: View {
     }
 }
 
-/// 完整版纪要的轻量 Markdown 渲染 —— 逐行分类（标题/列表/正文），行内 **加粗**/_斜体_ 交给
-/// Text(LocalizedStringKey:) 处理。没有引入三方 Markdown 库：内容格式由 Refine.mdSummarySystem
-/// 约束（只用 #/##/-/数字列表/**加粗**），不需要表格、代码块这类更复杂的语法。
+/// 完整版纪要的轻量 Markdown 渲染。覆盖 1—6 级标题、列表、引用、分隔线与常见行内格式，
+/// 保持纪要阅读所需的层级感，不引入完整 Markdown/WebView 依赖。
 struct MarkdownDocView: View {
     let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in row(for: line) }
         }
+        .frame(maxWidth: 820, alignment: .leading)
     }
 
     /// 折叠连续空行，避免段落间距被重复的空行撑开
@@ -291,33 +291,108 @@ struct MarkdownDocView: View {
 
     @ViewBuilder private func row(for line: String) -> some View {
         if line.isEmpty {
-            Color.clear.frame(height: 4)
-        } else if line.hasPrefix("### ") {
-            Text(LocalizedStringKey(String(line.dropFirst(4))))
-                .font(Theme.ui(13.5, .semibold)).foregroundColor(Theme.inkPrimary)
-        } else if line.hasPrefix("## ") {
-            Text(LocalizedStringKey(String(line.dropFirst(3))))
-                .font(Theme.ui(15.5, .bold)).foregroundColor(Theme.inkPrimary)
-                .padding(.top, 6)
-        } else if line.hasPrefix("# ") {
-            Text(LocalizedStringKey(String(line.dropFirst(2))))
-                .font(Theme.ui(18, .bold)).foregroundColor(Theme.inkPrimary)
-        } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-            HStack(alignment: .top, spacing: 7) {
-                Text("·").font(Theme.ui(13.5)).foregroundColor(Theme.inkTertiary)
-                Text(LocalizedStringKey(String(line.dropFirst(2))))
-                    .font(Theme.ui(13.5)).foregroundColor(Theme.inkPrimary).lineSpacing(4)
+            Color.clear.frame(height: 5)
+        } else if let heading = headingInfo(line) {
+            headingRow(level: heading.level, title: heading.title)
+        } else if ["---", "***", "___"].contains(line) {
+            Hairline().padding(.vertical, 7)
+        } else if line.hasPrefix("> ") {
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 1.5).fill(Theme.blue500.opacity(0.55)).frame(width: 3)
+                inlineText(String(line.dropFirst(2)), color: Theme.inkSecondary)
             }
-        } else if let range = line.range(of: #"^\d+\.\s"#, options: .regularExpression) {
-            HStack(alignment: .top, spacing: 7) {
+            .padding(.vertical, 7).padding(.horizontal, 11)
+            .background(Theme.blue50.opacity(0.65))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
+        } else if let checkbox = checkboxInfo(line) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: checkbox.checked ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(checkbox.checked ? Theme.green500 : Theme.inkMuted)
+                    .padding(.top, 3)
+                inlineText(checkbox.text, color: Theme.inkSecondary)
+            }
+        } else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
+            HStack(alignment: .top, spacing: 9) {
+                Circle().fill(Theme.inkMuted).frame(width: 4.5, height: 4.5).padding(.top, 7)
+                inlineText(String(line.dropFirst(2)), color: Theme.inkSecondary)
+            }
+        } else if let range = line.range(of: #"^\d+[\.)]\s"#, options: .regularExpression) {
+            HStack(alignment: .top, spacing: 9) {
                 Text(String(line[..<range.upperBound]).trimmingCharacters(in: .whitespaces))
-                    .font(Theme.ui(13.5)).foregroundColor(Theme.inkTertiary)
-                Text(LocalizedStringKey(String(line[range.upperBound...])))
-                    .font(Theme.ui(13.5)).foregroundColor(Theme.inkPrimary).lineSpacing(4)
+                    .font(Theme.mono(12, .medium)).foregroundColor(Theme.inkTertiary)
+                    .frame(minWidth: 20, alignment: .trailing).padding(.top, 1)
+                inlineText(String(line[range.upperBound...]), color: Theme.inkSecondary)
             }
         } else {
-            Text(LocalizedStringKey(line))
-                .font(Theme.ui(13.5)).foregroundColor(Theme.inkPrimary).lineSpacing(4)
+            inlineText(line, color: Theme.inkSecondary)
+        }
+    }
+
+    private func headingInfo(_ line: String) -> (level: Int, title: String)? {
+        let level = line.prefix { $0 == "#" }.count
+        guard (1...6).contains(level) else { return nil }
+        let rest = line.dropFirst(level)
+        guard rest.first?.isWhitespace == true else { return nil }
+        let title = rest.trimmingCharacters(in: .whitespaces)
+        return title.isEmpty ? nil : (level, title)
+    }
+
+    private func checkboxInfo(_ line: String) -> (checked: Bool, text: String)? {
+        let lower = line.lowercased()
+        if lower.hasPrefix("- [ ] ") { return (false, String(line.dropFirst(6))) }
+        if lower.hasPrefix("- [x] ") { return (true, String(line.dropFirst(6))) }
+        return nil
+    }
+
+    private func inlineText(_ value: String, color: Color) -> some View {
+        Text(LocalizedStringKey(value))
+            .font(Theme.ui(13.5))
+            .foregroundColor(color)
+            .lineSpacing(5)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private func headingRow(level: Int, title: String) -> some View {
+        switch level {
+        case 1:
+            Text(LocalizedStringKey(title))
+                .font(Theme.display(22, .semibold)).tracking(-0.35)
+                .foregroundColor(Theme.inkPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2).padding(.bottom, 3)
+        case 2:
+            VStack(alignment: .leading, spacing: 8) {
+                Text(LocalizedStringKey(title))
+                    .font(Theme.display(18, .semibold)).foregroundColor(Theme.inkPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Hairline()
+            }
+            .padding(.top, 13).padding(.bottom, 2)
+        case 3:
+            Text(LocalizedStringKey(title))
+                .font(Theme.ui(15.5, .semibold)).foregroundColor(Theme.inkPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10).padding(.bottom, 1)
+        case 4:
+            HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5).fill(Theme.brand500)
+                    .frame(width: 3, height: 16).padding(.top, 1)
+                Text(LocalizedStringKey(title))
+                    .font(Theme.ui(14.25, .semibold)).foregroundColor(Theme.inkPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 9).padding(.bottom, 1)
+        case 5:
+            Text(LocalizedStringKey(title))
+                .font(Theme.ui(13.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 7)
+        default:
+            Text(LocalizedStringKey(title))
+                .font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
         }
     }
 }

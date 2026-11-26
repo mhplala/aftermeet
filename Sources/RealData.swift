@@ -98,11 +98,16 @@ enum RealData {
     /// 逐条 upsert（新会 sort_ts 用当前时间，排最前）。不做全量替换 ——
     /// 全量替换会把"某行解码失败被 compactMap 丢掉"放大成物理删除。
     @discardableResult
-    static func upsert(_ m: RealMeeting, sortTs: Double = Date().timeIntervalSince1970) -> Bool {
+    static func upsert(_ m: RealMeeting,
+                       sortTs: Double = Date().timeIntervalSince1970,
+                       fullTranscript: String? = nil) -> Bool {
         guard let d = try? JSONEncoder().encode(m), let s = String(data: d, encoding: .utf8) else { return false }
+        let indexedTranscript = fullTranscript?.isEmpty == false
+            ? fullTranscript!
+            : m.excerpts.map { $0.text }.joined(separator: "\n")
         return DB.shared.upsertMeeting(id: m.meeting_id, kind: "feishu", sortTs: sortTs, payload: s,
                                        fts: DB.FTSDoc(title: m.title, summary: m.summary,
-                                                      transcript: m.excerpts.map { $0.text }.joined(separator: "\n")))
+                                                      transcript: indexedTranscript))
     }
 }
 
@@ -248,7 +253,21 @@ extension MeetingVM {
             let sum = name.unicodeScalars.reduce(0) { $0 + Int($1.value) }
             return palette[sum % palette.count]
         }
-        return ts.enumerated().map { idx, t in
+        return ts.enumerated().compactMap { idx, t in
+            // 少数模型会把结构化字段串进 text，或把 JSON null 写成字符串；这些都不能泄漏到 UI/飞书任务。
+            let text = t.text
+                .replacingOccurrences(of: #"\s*\|\s*(owner|due|confidence)\s*:\s*[^|]+"#,
+                                      with: "", options: .regularExpression)
+                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "|")))
+            guard !text.isEmpty else { return nil }
+
+            let rawDue = t.due?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let due: String = {
+                guard let d = rawDue, !d.isEmpty,
+                      !["null", "none", "无", "待定", "tbd", "n/a", "-"].contains(d.lowercased())
+                else { return "—" }
+                return d
+            }()
             // 豆包偶尔把 owner 写成字符串 "null"/"无"，一律当未指派
             let rawOwner = t.owner?.trimmingCharacters(in: .whitespaces)
             let owner: String? = {
@@ -260,17 +279,19 @@ extension MeetingVM {
             let unclaimed = (owner == nil) || (t.confidence?.lowercased() == "low")
             if unclaimed {
                 return DetailTodo(id: idx + 1, owner: nil, initial: "?", color: Color(hex: "a86a1a"),
-                                  text: t.text, due: t.due ?? "—", status: .unclaimed, orig: .unclaimed,
+                                  text: text, due: due, status: .unclaimed, orig: .unclaimed,
                                   note: "置信度低 · 未识别明确负责人")
             }
             let name = owner ?? ""
             return DetailTodo(id: idx + 1, owner: name, initial: String(name.prefix(1)),
-                              color: colorFor(name), text: t.text, due: t.due ?? "—",
+                              color: colorFor(name), text: text, due: due,
                               status: .pending, orig: .pending)
         }
     }
 
-    init(real m: RealMeeting) {
+    init(real m: RealMeeting,
+         sourceText: String? = nil,
+         sourceSegments: [KnowledgeSourceSegment] = []) {
         let mapped = MeetingVM.mapTodos(m.todos)
 
         var parts: [String] = []
@@ -292,14 +313,33 @@ extension MeetingVM {
         }
         self.disputes = m.disputes.map { Dispute(title: $0.title, body: $0.body) }
         self.nextAgenda = m.nextAgenda
-        self.transcript = m.excerpts.map { TranscriptLine(time: $0.time ?? "", who: $0.who ?? "", text: $0.text) }
-        self.rawTranscript = m.excerpts.map { $0.text }.joined(separator: "\n")
-        self.transcriptNote = "妙记逐字稿 · 豆包提炼"
+        func relativeTime(_ milliseconds: Int?) -> String {
+            guard let milliseconds else { return "" }
+            let seconds = max(0, milliseconds / 1000)
+            if seconds >= 3600 {
+                return String(format: "%d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
+            }
+            return String(format: "%d:%02d", seconds / 60, seconds % 60)
+        }
+        if sourceSegments.isEmpty {
+            self.transcript = m.excerpts.map {
+                TranscriptLine(time: $0.time ?? "", who: $0.who ?? "", text: $0.text)
+            }
+        } else {
+            self.transcript = sourceSegments.prefix(40).map {
+                TranscriptLine(time: relativeTime($0.startMS), who: $0.speaker ?? "现场", text: $0.text)
+            }
+        }
+        let completeSource = sourceText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.rawTranscript = completeSource?.isEmpty == false
+            ? sourceText!
+            : m.excerpts.map { $0.text }.joined(separator: "\n")
+        self.transcriptNote = completeSource?.isEmpty == false
+            ? "飞书逐字稿 · \(sourceText!.count) 字"
+            : "飞书摘录 · 完整逐字稿待同步"
         self.dtodos = mapped
         self.dayChip = MeetingVM.dayChip(from: m.dateLabel)
-        let people = m.participants.map { "\($0)人" } ?? ""
-        self.recentMeta = [m.dateLabel ?? "", people, "\(m.todos.count) 条待办"]
-            .filter { !$0.isEmpty }.joined(separator: " · ")
+        self.recentMeta = m.dateLabel ?? ""
     }
 
     /// Build a meeting from a locally-captured + refined live session.
@@ -335,7 +375,7 @@ extension MeetingVM {
         self.transcriptNote = "本地转写 · \(transcript.count) 字"
         self.dtodos = MeetingVM.mapTodos(note.todos)
         self.dayChip = MeetingVM.dayChip(from: dateStr)
-        self.recentMeta = [dateStr, "时长 \(dur)", "\(note.todos.count) 条待办"].joined(separator: " · ")
+        self.recentMeta = [dateStr, "时长 \(dur)"].joined(separator: " · ")
     }
 
     static func dayChip(from label: String?) -> String {
@@ -396,7 +436,7 @@ extension MeetingVM {
         transcriptNote: "妙记 · 4,210 字",
         dtodos: DetailTodo.sample,
         dayChip: "6/10",
-        recentMeta: "6/10 · 7人 · 6 条待办",
+        recentMeta: "6/10",
         keyPoints: [
             "「会前追问」排在「会后纪要」之前，是因为数据显示用户最容易流失在“收到纪要却没人跟进”这一步——优先级押在闭环而非记录。",
             "灰度只开 3 个内部团队、6/20 前不扩量，本质是先把确认率/闭环率基线测准，再谈规模。",

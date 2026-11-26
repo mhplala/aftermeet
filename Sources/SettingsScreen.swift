@@ -145,14 +145,18 @@ struct SettingsScreen: View {
     @EnvironmentObject var store: AppStore
     @StateObject private var downloader = ModelDownloader()
     @State private var currentModel = Whisper.model
+    @State private var cloudASRMode = CloudASRConfig.mode.rawValue
     @State private var cloudASRURL = UserDefaults.standard.string(forKey: "cloudASRBaseURL") ?? ""
     @State private var cloudASREnabled = CloudASRConfig.isEnabled
     @State private var cloudNeverFallback = CloudASRConfig.neverFallbackToLocal
+    @State private var volcASRAppID = CloudASRConfig.directAppID
+    @State private var volcASRKey = CloudASRConfig.directAPIKey ?? ""
+    @State private var volcASRKeySaved = CloudASRConfig.directAPIKey?.isEmpty == false
+    @State private var volcASRKeySaveFailed = false
     @State private var micMode = AudioInputDevices.mode
     @State private var inputDevices: [AudioInputDevice] = []
     @State private var localModels: [(path: String, size: String)] = []
-    @State private var usage: String = ""
-    @State private var usageLoading = false
+    @State private var showAdvanced = false
 
     // BYOK 表单状态
     @State private var aiMode = UserDefaults.standard.string(forKey: AIBackend.modeKey) ?? "builtin"
@@ -171,24 +175,79 @@ struct SettingsScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Overline("偏好与状态", tracking: 1.2).padding(.bottom, 8)
                 Text("设置")
                     .font(Theme.display(36, .semibold)).tracking(-0.8)
                     .foregroundColor(Theme.inkPrimary)
                     .padding(.bottom, 20)
 
-                section("转写引擎") { engineSection }
-                section("转写模型") { modelSection }
+                section("转写") { transcriptionSummary }
                 section("录制") { recordSection }
-                section("飞书") { larkSection }
                 section("AI 服务") { aiSection }
-                section("数据") { dataSection }
+                advancedSettings
             }
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(32)
         }
-        .onAppear { scanModels(); fetchUsage(); inputDevices = AudioInputDevices.list() }
+        .onAppear { scanModels(); inputDevices = AudioInputDevices.list() }
+    }
+
+    private var transcriptionSummary: some View {
+        row {
+            Toggle("", isOn: $cloudASREnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .onChange(of: cloudASREnabled) { _, v in UserDefaults.standard.set(v, forKey: "cloudASREnabled") }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(cloudASREnabled ? (cloudASRMode == CloudASRMode.direct.rawValue ? "火山直连" : "AfterMeet 代理")
+                                     : "本地转写")
+                    .font(Theme.ui(13, .medium)).foregroundColor(Theme.inkPrimary)
+                Text(cloudASREnabled
+                     ? (CloudASRConfig.isConfigured ? "已配置" : "需要在高级设置中完成配置")
+                     : "音频不出网，使用本地 whisper")
+                    .font(Theme.mono(9.5))
+                    .foregroundColor(CloudASRConfig.isConfigured || !cloudASREnabled ? Theme.inkMuted : Theme.warn500)
+            }
+            Spacer()
+            Circle().fill(CloudASRConfig.isConfigured || !cloudASREnabled ? Theme.green500 : Theme.warn500)
+                .frame(width: 7, height: 7)
+        }
+    }
+
+    private var advancedSettings: some View {
+        Card(padding: 0) {
+            DisclosureGroup(isExpanded: $showAdvanced) {
+                VStack(alignment: .leading, spacing: 12) {
+                    advancedLabel("转写连接")
+                    engineSection
+                    advancedLabel("本地模型")
+                    modelSection
+                    advancedLabel("飞书连接")
+                    larkSection
+                    advancedLabel("数据")
+                    dataSection
+                }
+                .padding(.top, 14)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 13)).foregroundColor(Theme.inkSecondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("高级设置").font(Theme.ui(13, .medium)).foregroundColor(Theme.inkPrimary)
+                        Text("接入密钥、本地模型与诊断")
+                            .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                    }
+                }
+            }
+            .tint(Theme.inkSecondary)
+            .padding(16)
+        }
+        .padding(.bottom, 22)
+    }
+
+    private func advancedLabel(_ text: String) -> some View {
+        Text(text)
+            .font(Theme.mono(10, .semibold)).tracking(0.8)
+            .foregroundColor(Theme.inkMuted)
+            .padding(.top, 6)
     }
 
     private func section<C: View>(_ title: String, @ViewBuilder content: @escaping () -> C) -> some View {
@@ -208,28 +267,74 @@ struct SettingsScreen: View {
         let bundled = server?.hasPrefix(Bundle.main.bundlePath) == true
         return VStack(spacing: 0) {
             row {
-                Toggle("", isOn: $cloudASREnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    .onChange(of: cloudASREnabled) { _, v in UserDefaults.standard.set(v, forKey: "cloudASREnabled") }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("云端转写（火山引擎）").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
-                    Text(cloudASREnabled ? "默认开启，不占本机性能；断网或异常自动退回本地"
-                                          : "已关闭，转写走本机 whisper（音频不出网，但更吃性能）")
-                        .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                Text("接入方式").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
+                Spacer()
+                Picker("", selection: $cloudASRMode) {
+                    Text("火山直连（国内推荐）").tag(CloudASRMode.direct.rawValue)
+                    Text("AfterMeet 代理").tag(CloudASRMode.proxy.rawValue)
                 }
-                Spacer()
-                Circle().fill(CloudASRConfig.isConfigured ? Theme.green500 : Theme.inkMuted).frame(width: 7, height: 7)
+                .labelsHidden().pickerStyle(.segmented).frame(width: 300)
+                .onChange(of: cloudASRMode) { _, v in
+                    UserDefaults.standard.set(v, forKey: CloudASRConfig.modeKey)
+                }
             }
-            Hairline()
-            row {
-                Text("代理地址").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
-                TextField(CloudASRConfig.defaultBaseURL, text: $cloudASRURL)
-                    .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
-                    .autocorrectionDisabled()
-                    .onChange(of: cloudASRURL) { _, v in
-                        UserDefaults.standard.set(v.trimmingCharacters(in: .whitespaces), forKey: "cloudASRBaseURL")
+            if cloudASRMode == CloudASRMode.direct.rawValue {
+                Hairline()
+                row {
+                    Text("App ID").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
+                    TextField("新版单 Key 模式可留空", text: $volcASRAppID)
+                        .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
+                        .autocorrectionDisabled()
+                        .onChange(of: volcASRAppID) { _, v in
+                            UserDefaults.standard.set(v.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                      forKey: CloudASRConfig.directAppIDKey)
+                        }
+                    Spacer()
+                    Text("旧版控制台必填").font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                }
+                Hairline()
+                row {
+                    Text("密钥").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
+                    SecureField("API Key 或 Access Token", text: $volcASRKey)
+                        .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
+                        .onChange(of: volcASRKey) { _, _ in
+                            volcASRKeySaved = false
+                            volcASRKeySaveFailed = false
+                        }
+                    Spacer()
+                    if volcASRKeySaveFailed {
+                        Text("钥匙串写入失败").font(Theme.mono(9.5)).foregroundColor(Theme.danger500)
+                    } else if volcASRKeySaved {
+                        Text("已存钥匙串").font(Theme.mono(9.5)).foregroundColor(Theme.green500)
                     }
-                Spacer()
-                Text("留空 = 用内置地址").font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                    Button {
+                        let ok = CloudASRConfig.setDirectAPIKey(volcASRKey)
+                        volcASRKeySaved = ok && !volcASRKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        volcASRKeySaveFailed = !ok
+                    } label: {
+                        Text("保存").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                            .padding(.horizontal, 11).padding(.vertical, 5)
+                            .background(Theme.white).clipShape(Capsule())
+                            .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain)
+                }
+                Text("火山语音控制台若显示 App ID + Access Token，请两项都填；若只提供 X-Api-Key，App ID 留空。")
+                    .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+            } else {
+                Hairline()
+                row {
+                    Text("代理地址").font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary).frame(width: 76, alignment: .leading)
+                    TextField(CloudASRConfig.defaultBaseURL, text: $cloudASRURL)
+                        .textFieldStyle(.plain).font(Theme.mono(12)).foregroundColor(Theme.inkPrimary)
+                        .autocorrectionDisabled()
+                        .onChange(of: cloudASRURL) { _, v in
+                            UserDefaults.standard.set(v.trimmingCharacters(in: .whitespaces), forKey: "cloudASRBaseURL")
+                        }
+                    Spacer()
+                    Text("留空 = 用内置地址").font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                }
             }
             Hairline()
             row {
@@ -239,7 +344,9 @@ struct SettingsScreen: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("断线时死磕云端，不退回本地").font(Theme.ui(13)).foregroundColor(cloudASREnabled ? Theme.inkPrimary : Theme.inkMuted)
                     Text(cloudNeverFallback ? "一直退避重连直到恢复；重连期间音频照常录，但这段会缺字"
-                                            : "重连 5 次仍失败才切本地 whisper（约 30 秒）")
+                                            : (cloudASRMode == CloudASRMode.direct.rawValue
+                                               ? "直连重试 2 次仍失败即切本地 whisper（约 3 秒）"
+                                               : "代理重试 5 次仍失败才切本地 whisper（约 30 秒）"))
                         .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
                 }
                 Spacer()
@@ -268,11 +375,8 @@ struct SettingsScreen: View {
                             .font(.system(size: 14)).foregroundColor(on ? Theme.blue500 : Theme.inkMuted)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(name).font(Theme.ui(13, .medium)).foregroundColor(Theme.inkPrimary)
-                            Text(m.path).font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
-                                .lineLimit(1).truncationMode(.middle)
                         }
                         Spacer()
-                        Text(m.size).font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
                     }
                 }
                 .buttonStyle(.plain)
@@ -411,31 +515,9 @@ struct SettingsScreen: View {
     // MARK: 飞书
 
     private var larkSection: some View {
-        VStack(spacing: 0) {
-            statusRow("lark-cli", ok: Lark.available,
-                      okText: Lark.available ? Lark.cli : "已安装",
-                      failText: "未找到（支持 /opt/homebrew、/usr/local、npm 全局等安装方式）")
-            Hairline()
-            row {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("消息发送权限").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
-                    Text("转发纪要到群需要 im:message.send_as_user").font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
-                }
-                Spacer()
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(
-                        "lark-cli auth login --scope \"im:message.send_as_user im:message\"", forType: .string)
-                    store.showToast("授权命令已复制，在终端运行并完成浏览器授权")
-                } label: {
-                    Text("复制授权命令").font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
-                        .padding(.horizontal, 11).padding(.vertical, 5)
-                        .background(Theme.white).clipShape(Capsule())
-                        .overlay(Capsule().strokeBorder(Theme.borderDefault, lineWidth: 1))
-                        .contentShape(Capsule())
-                }.buttonStyle(.plain)
-            }
-        }
+        statusRow("lark-cli", ok: Lark.available,
+                  okText: Lark.available ? "已连接" : "已安装",
+                  failText: "未连接")
     }
 
     // MARK: AI 服务（内置 / BYOK）
@@ -454,19 +536,9 @@ struct SettingsScreen: View {
                     UserDefaults.standard.set(v, forKey: AIBackend.modeKey)
                 }
             }
-            Hairline()
             if aiMode == "byok" {
+                Hairline()
                 byokForm
-            } else {
-                row {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("内置服务（纪要提炼 / 问答）").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
-                        Text("按设备限额 · 标识 " + String(SikuCloud.deviceToken.suffix(12)))
-                            .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
-                    }
-                    Spacer()
-                    Text(usage.isEmpty ? "…" : usage).font(Theme.mono(11)).foregroundColor(Theme.inkTertiary)
-                }
             }
         }
     }
@@ -530,9 +602,40 @@ struct SettingsScreen: View {
     // MARK: 数据
 
     private var dataSection: some View {
-        VStack(spacing: 0) {
+        let diagnostics = KnowledgeStore.shared.diagnostics()
+        return VStack(spacing: 0) {
             row {
-                Text("会议 \(store.meetings.count) 场 · 转写档案实时落盘")
+                Toggle("", isOn: Binding(
+                    get: { store.knowledgeEnabled },
+                    set: { store.setKnowledgeEnabled($0) }
+                ))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("工作知识库").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
+                    Text("关闭后停止新的知识任务并隐藏入口；不会删除本地数据")
+                        .font(Theme.mono(9.5)).foregroundColor(Theme.inkMuted)
+                }
+                Spacer()
+            }
+            Hairline()
+            row {
+                Circle().fill(diagnostics.isClean ? Theme.green500 : Theme.danger500)
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("知识库诊断").font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
+                    Text(diagnostics.error
+                         ?? "schema v\(diagnostics.schemaVersion) · \(diagnostics.tableCounts["knowledge_units", default: 0]) 条知识 · \(diagnostics.tableCounts["extraction_jobs", default: 0]) 个任务")
+                        .font(Theme.mono(9.5))
+                        .foregroundColor(diagnostics.isClean ? Theme.inkMuted : Theme.danger500)
+                }
+                Spacer()
+                Text(diagnostics.isClean ? "正常" : "需检查")
+                    .font(Theme.mono(10.5, .semibold))
+                    .foregroundColor(diagnostics.isClean ? Theme.green500 : Theme.danger500)
+            }
+            Hairline()
+            row {
+                Text("本地数据")
                     .font(Theme.ui(13)).foregroundColor(Theme.inkPrimary)
                 Spacer()
                 Button {
@@ -584,37 +687,4 @@ struct SettingsScreen: View {
         currentModel = Whisper.model
     }
 
-    /// GET /v1/usage —— 今日 token 用量 / 配额（走和提炼同一条 SNI 绕过链路）
-    private func fetchUsage() {
-        guard !usageLoading else { return }
-        usageLoading = true
-        Task.detached(priority: .utility) {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-            p.arguments = ["-sk", "--max-time", "15",
-                           "https://\(Refine.ip)/v1/usage",
-                           "-H", "Host: \(Refine.host)",
-                           "-H", "Authorization: Bearer \(SikuCloud.deviceToken)",
-                           "-H", "X-Siku-App: \(SikuCloud.appSecret)"]
-            let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
-            do { try p.run() } catch {
-                await MainActor.run { self.usage = "用量读取失败"; self.usageLoading = false }
-                return
-            }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
-            var label = "用量读取失败"
-            if let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-                let used = (json["used"] as? Int) ?? (json["used_today"] as? Int) ?? 0
-                let quota = (json["daily_quota"] as? Int) ?? (json["quota"] as? Int) ?? 0
-                if quota > 0 {
-                    label = "今日 \(used / 1000)k / \(quota / 1_000_000)M token"
-                } else if quota == -1 {
-                    label = "今日 \(used / 1000)k token · 无限额"
-                }
-            }
-            let final = label
-            await MainActor.run { self.usage = final; self.usageLoading = false }
-        }
-    }
 }
