@@ -8,6 +8,9 @@ final class KnowledgeFingerprintTests: XCTestCase {
                        subject: String? = "松果计划") -> NormalizedKnowledgeCandidate {
         NormalizedKnowledgeCandidate(
             kind: .fact,
+            claimType: .observedFact,
+            epistemicStatus: .certain,
+            attributedTo: nil,
             canonicalText: canonical,
             subject: subject,
             predicate: "状态",

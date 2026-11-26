@@ -6,7 +6,7 @@ import SQLite3
 /// 追加一场会 = 插一行，不再整文件重写；首启自动从旧 JSON 迁移，旧文件原地保留作备份。
 final class DB {
     static let shared = DB()
-    static let currentSchemaVersion = 9
+    static let currentSchemaVersion = 12
 
     /// Base storage can remain usable even when an additive knowledge migration is unavailable.
     private(set) var healthy = true
@@ -28,7 +28,9 @@ final class DB {
         if let override = env["AFTERMEET_DATABASE_PATH"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        if env["XCTestConfigurationFilePath"] != nil || UserDefaults.standard.bool(forKey: "demo") {
+        if env["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.processName == "xctest"
+            || UserDefaults.standard.bool(forKey: "demo") {
             let base = FileManager.default.temporaryDirectory
                 .appendingPathComponent("AfterMeet-Isolated-" + String(ProcessInfo.processInfo.processIdentifier))
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -560,6 +562,97 @@ final class DB {
                     BEFORE UPDATE ON extraction_diagnostics
                     BEGIN SELECT RAISE(ABORT, 'extraction_diagnostics is append-only'); END;
                 """)
+        case 10:
+            return execLocked("""
+                ALTER TABLE knowledge_units ADD COLUMN claim_type TEXT NOT NULL DEFAULT 'observed_fact'
+                    CHECK(claim_type IN ('observed_fact','attributed_opinion','forecast','proposal','decision','commitment','status_update','open_question'));
+                ALTER TABLE knowledge_units ADD COLUMN epistemic_status TEXT NOT NULL DEFAULT 'certain'
+                    CHECK(epistemic_status IN ('certain','soft','tentative','conditional'));
+                ALTER TABLE knowledge_units ADD COLUMN attributed_to TEXT;
+                ALTER TABLE knowledge_units ADD COLUMN observation_basis TEXT NOT NULL DEFAULT 'meeting_time'
+                    CHECK(observation_basis IN ('meeting_time','ingestion_time','unknown'));
+                ALTER TABLE knowledge_units ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(verification_status IN ('pending','passed','blocked'));
+                ALTER TABLE knowledge_units ADD COLUMN verification_reasons_json TEXT NOT NULL DEFAULT '[]';
+                ALTER TABLE knowledge_units ADD COLUMN verifier_version TEXT;
+                ALTER TABLE knowledge_units ADD COLUMN verified_at REAL;
+                CREATE INDEX idx_knowledge_units_trust
+                    ON knowledge_units(review_status,verification_status,updated_at DESC);
+                UPDATE knowledge_units
+                SET verification_status='passed',verification_reasons_json='[]',
+                    verifier_version='legacy-human-review',verified_at=updated_at
+                WHERE review_status IN ('confirmed','edited') AND EXISTS(
+                    SELECT 1 FROM unit_sources us
+                    WHERE us.unit_id=knowledge_units.id AND us.evidence_role='support'
+                );
+                UPDATE knowledge_units
+                SET review_status='candidate',verification_status='blocked',
+                    verification_reasons_json='["missing_support"]'
+                WHERE review_status IN ('confirmed','edited') AND NOT EXISTS(
+                    SELECT 1 FROM unit_sources us
+                    WHERE us.unit_id=knowledge_units.id AND us.evidence_role='support'
+                );
+                DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id IN (
+                    SELECT id FROM knowledge_units
+                    WHERE review_status NOT IN ('confirmed','edited') OR verification_status<>'passed'
+                );
+                """)
+        case 11:
+            return execLocked("""
+                UPDATE knowledge_units
+                SET verification_status='passed',
+                    verification_reasons_json='[]',
+                    verifier_version='knowledge-entailment-v1+knowledge-qualification-v2',
+                    verified_at=COALESCE(verified_at,updated_at)
+                WHERE review_status='candidate'
+                  AND verification_status='blocked'
+                  AND kind='action'
+                  AND claim_type='proposal'
+                  AND verification_reasons_json='["incompatible_claim_type"]';
+                """)
+        case 12:
+            return execLocked("""
+                UPDATE knowledge_units
+                SET verification_status='passed',verification_reasons_json='[]',
+                    verifier_version='legacy-human-review',verified_at=updated_at
+                WHERE review_status IN ('confirmed','edited')
+                  AND verification_status='pending'
+                  AND EXISTS(
+                    SELECT 1 FROM unit_sources us
+                    WHERE us.unit_id=knowledge_units.id AND us.evidence_role='support'
+                  );
+                INSERT INTO knowledge_fts(
+                    doc_type,doc_id,meeting_id,project_id,title,body,context
+                )
+                SELECT 'unit',u.id,ss.meeting_id,
+                       (SELECT project_id FROM unit_projects up WHERE up.unit_id=u.id
+                        ORDER BY up.review_status='confirmed' DESC,up.relevance DESC LIMIT 1),
+                       COALESCE(f.title,ss.meeting_id),u.canonical_text,
+                       trim(COALESCE(u.subject,'') || ' ' || COALESCE(u.predicate,'') || ' ' || COALESCE(u.object_text,''))
+                FROM knowledge_units u
+                JOIN unit_sources us ON us.unit_id=u.id AND us.evidence_role='support'
+                JOIN source_segments ss ON ss.id=us.segment_id
+                LEFT JOIN knowledge_fts f ON f.doc_type='segment' AND f.doc_id=ss.id
+                WHERE u.review_status IN ('confirmed','edited')
+                  AND u.verification_status='passed'
+                  AND NOT EXISTS(
+                    SELECT 1 FROM knowledge_fts existing
+                    WHERE existing.doc_type='unit' AND existing.doc_id=u.id
+                  )
+                GROUP BY u.id;
+                UPDATE knowledge_units
+                SET verification_status='blocked',
+                    verification_reasons_json='["requires_verifier_v2"]',
+                    verified_at=NULL
+                WHERE review_status='candidate'
+                  AND verification_status='passed'
+                  AND verifier_version LIKE 'knowledge-entailment-v1%';
+                DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id IN (
+                    SELECT id FROM knowledge_units
+                    WHERE review_status='candidate'
+                      AND verification_reasons_json='["requires_verifier_v2"]'
+                );
+                """)
         default:
             return false
         }
@@ -786,14 +879,34 @@ final class DB {
         q.sync {
             ok = transactionLocked {
                 var segmentIDs: [String] = []
+                var affectedUnitIDs = Set<String>()
                 queryLocked("SELECT id FROM source_segments WHERE source_id=?", [id]) {
                     if let segmentID = $0[0] { segmentIDs.append(segmentID) }
                 }
                 for segmentID in segmentIDs {
+                    queryLocked("SELECT DISTINCT unit_id FROM unit_sources WHERE segment_id=?", [segmentID]) {
+                        if let unitID = $0[0] { affectedUnitIDs.insert(unitID) }
+                    }
                     guard runLocked("DELETE FROM knowledge_fts WHERE doc_type='segment' AND doc_id=?",
                                     [segmentID]) else { return false }
                 }
-                return runLocked("DELETE FROM source_documents WHERE id=?", [id])
+                guard runLocked("DELETE FROM source_documents WHERE id=?", [id]) else { return false }
+                for unitID in affectedUnitIDs where scalarIntLocked("""
+                    SELECT COUNT(*) FROM unit_sources WHERE unit_id=? AND evidence_role='support'
+                    """, [unitID]) == 0 {
+                    guard runLocked("""
+                        UPDATE knowledge_units SET
+                            review_status=CASE WHEN review_status='rejected' THEN 'rejected' ELSE 'candidate' END,
+                            verification_status='blocked',
+                            verification_reasons_json='["missing_support"]',
+                            verifier_version=?,verified_at=NULL,updated_at=?
+                        WHERE id=?
+                        """, [KnowledgeQualificationValidator.version,
+                                Date().timeIntervalSince1970, unitID]),
+                          runLocked("DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id=?", [unitID])
+                    else { return false }
+                }
+                return true
             }
         }
         return ok
@@ -813,13 +926,18 @@ final class DB {
             ok = transactionLocked {
                 guard runLocked("""
                     INSERT INTO knowledge_units(
-                        id,kind,canonical_text,subject,predicate,object_text,numeric_value,value_unit,
-                        owner,due_text,valid_from,valid_to,observed_at,review_status,evidence_level,
-                        conflict_status,sensitivity,fingerprint,revision,extractor_version,prompt_version,
-                        schema_version,model,payload_json,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        id,kind,claim_type,epistemic_status,attributed_to,canonical_text,subject,predicate,
+                        object_text,numeric_value,value_unit,owner,due_text,valid_from,valid_to,observed_at,
+                        observation_basis,review_status,evidence_level,verification_status,
+                        verification_reasons_json,verifier_version,verified_at,conflict_status,sensitivity,
+                        fingerprint,revision,extractor_version,prompt_version,schema_version,model,payload_json,
+                        created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(id) DO UPDATE SET
                         kind=excluded.kind,
+                        claim_type=excluded.claim_type,
+                        epistemic_status=excluded.epistemic_status,
+                        attributed_to=excluded.attributed_to,
                         canonical_text=excluded.canonical_text,
                         subject=excluded.subject,
                         predicate=excluded.predicate,
@@ -831,8 +949,13 @@ final class DB {
                         valid_from=excluded.valid_from,
                         valid_to=excluded.valid_to,
                         observed_at=excluded.observed_at,
+                        observation_basis=excluded.observation_basis,
                         review_status=excluded.review_status,
                         evidence_level=excluded.evidence_level,
+                        verification_status=excluded.verification_status,
+                        verification_reasons_json=excluded.verification_reasons_json,
+                        verifier_version=excluded.verifier_version,
+                        verified_at=excluded.verified_at,
                         conflict_status=excluded.conflict_status,
                         sensitivity=excluded.sensitivity,
                         fingerprint=excluded.fingerprint,
@@ -843,10 +966,13 @@ final class DB {
                         model=excluded.model,
                         payload_json=excluded.payload_json,
                         updated_at=excluded.updated_at
-                    """, [unit.id, unit.kind.rawValue, unit.canonicalText, unit.subject,
-                            unit.predicate, unit.objectText, unit.numericValue, unit.valueUnit,
+                    """, [unit.id, unit.kind.rawValue, unit.claimType.rawValue,
+                            unit.epistemicStatus.rawValue, unit.attributedTo, unit.canonicalText,
+                            unit.subject, unit.predicate, unit.objectText, unit.numericValue, unit.valueUnit,
                             unit.owner, unit.dueText, unit.validFrom, unit.validTo, unit.observedAt,
-                            unit.reviewStatus.rawValue, unit.evidenceLevel.rawValue,
+                            unit.observationBasis.rawValue, unit.reviewStatus.rawValue,
+                            unit.evidenceLevel.rawValue, unit.verificationStatus.rawValue,
+                            unit.verificationReasonsJSON, unit.verifierVersion, unit.verifiedAt,
                             unit.conflictStatus.rawValue, unit.sensitivity.rawValue, unit.fingerprint,
                             unit.revision, unit.extractorVersion, unit.promptVersion, unit.schemaVersion,
                             unit.model, unit.payloadJSON, unit.createdAt, unit.updatedAt]),
@@ -874,11 +1000,10 @@ final class DB {
                 guard runLocked("DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id=?", [unit.id]) else {
                     return false
                 }
-                if unit.reviewStatus != .rejected {
+                if unit.isTrusted {
                     let projectID = projectLinks.first(where: { $0.reviewStatus == .confirmed })?.projectID
                         ?? projectLinks.first?.projectID
-                    let context = [unit.subject, unit.predicate, unit.objectText]
-                        .compactMap { $0 }.joined(separator: " ")
+                    let context = unit.searchContext
                     guard runLocked("""
                         INSERT INTO knowledge_fts(
                             doc_type,doc_id,meeting_id,project_id,title,body,context
@@ -895,6 +1020,8 @@ final class DB {
     @discardableResult
     func confirmKnowledgeUnit(id: String,
                               feedback: KnowledgeFeedbackEvent,
+                              meetingID: String,
+                              meetingTitle: String,
                               now: TimeInterval) -> Bool {
         guard knowledgeHealthy,
               feedback.targetType == "knowledge_unit",
@@ -903,25 +1030,51 @@ final class DB {
         var ok = false
         q.sync {
             var currentStatus: KnowledgeReviewStatus?
-            queryLocked("SELECT review_status FROM knowledge_units WHERE id=?", [id]) {
-                currentStatus = $0[0].flatMap(KnowledgeReviewStatus.init(rawValue:))
+            var verificationStatus: KnowledgeVerificationStatus?
+            var body: String?
+            var context = ""
+            queryLocked("""
+                SELECT review_status,verification_status,canonical_text,subject,predicate,object_text,payload_json
+                FROM knowledge_units WHERE id=?
+                """, [id]) { row in
+                currentStatus = row[0].flatMap(KnowledgeReviewStatus.init(rawValue:))
+                verificationStatus = row[1].flatMap(KnowledgeVerificationStatus.init(rawValue:))
+                body = row[2]
+                context = [row[3], row[4], row[5], KnowledgeTopicContext.from(payloadJSON: row[6] ?? "{}")?.searchText].compactMap { $0 }.joined(separator: " ")
             }
             if currentStatus == .confirmed || currentStatus == .edited {
-                ok = true
+                ok = verificationStatus == .passed
                 return
             }
             guard currentStatus == .candidate,
+                  verificationStatus == .passed,
+                  body != nil,
                   scalarIntLocked("""
-                      SELECT COUNT(*) FROM unit_sources
-                      WHERE unit_id=? AND evidence_role='support'
+                      SELECT COUNT(*) FROM unit_sources us
+                      JOIN source_segments ss ON ss.id=us.segment_id
+                      WHERE us.unit_id=? AND us.evidence_role='support'
+                        AND length(trim(us.quote))>0
                       """, [id]) > 0 else { return }
+            var projectID: String?
+            queryLocked("""
+                SELECT project_id FROM unit_projects WHERE unit_id=?
+                ORDER BY review_status='confirmed' DESC,relevance DESC LIMIT 1
+                """, [id]) { projectID = $0[0] }
             ok = transactionLocked {
                 runLocked("""
                     UPDATE knowledge_units SET review_status='confirmed',updated_at=?
-                    WHERE id=? AND review_status='candidate'
+                    WHERE id=? AND review_status='candidate' AND verification_status='passed'
                     """, [now, id])
                     && sqlite3_changes(handle) == 1
-                    && runLocked("UPDATE unit_sources SET verified=1 WHERE unit_id=?", [id])
+                    && runLocked("""
+                        UPDATE unit_sources SET verified=(evidence_role='support') WHERE unit_id=?
+                        """, [id])
+                    && runLocked("DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id=?", [id])
+                    && runLocked("""
+                        INSERT INTO knowledge_fts(
+                            doc_type,doc_id,meeting_id,project_id,title,body,context
+                        ) VALUES('unit',?,?,?,?,?,?)
+                        """, [id, meetingID, projectID, meetingTitle, body, context])
                     && runLocked("""
                         INSERT INTO feedback_events(
                             id,target_type,target_id,action,before_json,after_json,reason,actor,created_at
@@ -950,17 +1103,24 @@ final class DB {
             ok = transactionLocked {
                 guard runLocked("""
                     UPDATE knowledge_units SET
-                        kind=?,canonical_text=?,subject=?,predicate=?,object_text=?,numeric_value=?,
-                        value_unit=?,owner=?,due_text=?,valid_from=?,valid_to=?,review_status='edited',
+                        kind=?,claim_type=?,epistemic_status=?,attributed_to=?,canonical_text=?,
+                        subject=?,predicate=?,object_text=?,numeric_value=?,value_unit=?,owner=?,due_text=?,
+                        valid_from=?,valid_to=?,observation_basis=?,review_status='edited',
+                        verification_status=?,verification_reasons_json=?,verifier_version=?,verified_at=?,
                         conflict_status=?,sensitivity=?,fingerprint=?,revision=?,updated_at=?
                     WHERE id=? AND review_status IN ('candidate','confirmed','edited')
-                    """, [unit.kind.rawValue, unit.canonicalText, unit.subject, unit.predicate,
+                    """, [unit.kind.rawValue, unit.claimType.rawValue, unit.epistemicStatus.rawValue,
+                            unit.attributedTo, unit.canonicalText, unit.subject, unit.predicate,
                             unit.objectText, unit.numericValue, unit.valueUnit, unit.owner, unit.dueText,
-                            unit.validFrom, unit.validTo, unit.conflictStatus.rawValue,
+                            unit.validFrom, unit.validTo, unit.observationBasis.rawValue,
+                            unit.verificationStatus.rawValue, unit.verificationReasonsJSON,
+                            unit.verifierVersion, unit.verifiedAt, unit.conflictStatus.rawValue,
                             unit.sensitivity.rawValue, unit.fingerprint, unit.revision,
                             unit.updatedAt, unit.id]),
                       sqlite3_changes(handle) == 1,
-                      runLocked("UPDATE unit_sources SET verified=1 WHERE unit_id=?", [unit.id]),
+                      runLocked("""
+                          UPDATE unit_sources SET verified=(evidence_role='support') WHERE unit_id=?
+                          """, [unit.id]),
                       runLocked("""
                           INSERT INTO feedback_events(
                               id,target_type,target_id,action,before_json,after_json,reason,actor,created_at
@@ -975,8 +1135,7 @@ final class DB {
                     SELECT project_id FROM unit_projects WHERE unit_id=?
                     ORDER BY review_status='confirmed' DESC,relevance DESC LIMIT 1
                     """, [unit.id]) { projectID = $0[0] }
-                let context = [unit.subject, unit.predicate, unit.objectText]
-                    .compactMap { $0 }.joined(separator: " ")
+                let context = unit.searchContext
                 return runLocked("""
                     INSERT INTO knowledge_fts(
                         doc_type,doc_id,meeting_id,project_id,title,body,context
@@ -1043,22 +1202,11 @@ final class DB {
               scalarKnowledgeSupportCount(unitID: id) > 0 else { return false }
         var ok = false
         q.sync {
-            var body: String?
-            var context = ""
-            queryLocked("""
-                SELECT canonical_text,subject,predicate,object_text,review_status
-                FROM knowledge_units WHERE id=?
-                """, [id]) { row in
-                guard row[4] == KnowledgeReviewStatus.rejected.rawValue else { return }
-                body = row[0]
-                context = [row[1], row[2], row[3]].compactMap { $0 }.joined(separator: " ")
+            var status: KnowledgeReviewStatus?
+            queryLocked("SELECT review_status FROM knowledge_units WHERE id=?", [id]) {
+                status = $0[0].flatMap(KnowledgeReviewStatus.init(rawValue:))
             }
-            guard let body else { return }
-            var projectID: String?
-            queryLocked("""
-                SELECT project_id FROM unit_projects WHERE unit_id=?
-                ORDER BY review_status='confirmed' DESC,relevance DESC LIMIT 1
-                """, [id]) { projectID = $0[0] }
+            guard status == .rejected else { return }
             ok = transactionLocked {
                 runLocked("UPDATE knowledge_units SET review_status='candidate',updated_at=? WHERE id=? AND review_status='rejected'",
                           [now, id])
@@ -1071,11 +1219,7 @@ final class DB {
                         """, [feedback.id, feedback.targetType, feedback.targetID,
                                 feedback.action.rawValue, feedback.beforeJSON, feedback.afterJSON,
                                 feedback.reason, feedback.actor, feedback.createdAt])
-                    && runLocked("""
-                        INSERT INTO knowledge_fts(
-                            doc_type,doc_id,meeting_id,project_id,title,body,context
-                        ) VALUES('unit',?,?,?,?,?,?)
-                        """, [id, meetingID, projectID, meetingTitle, body, context])
+                    && runLocked("DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id=?", [id])
             }
         }
         return ok
@@ -1147,23 +1291,88 @@ final class DB {
         q.sync {
             var primaryStatus: KnowledgeReviewStatus?
             var duplicateStatus: KnowledgeReviewStatus?
+            var primaryVerification: KnowledgeVerificationStatus?
+            var duplicateVerification: KnowledgeVerificationStatus?
             var primaryFingerprint: String?
             var duplicateFingerprint: String?
-            queryLocked("SELECT review_status,fingerprint FROM knowledge_units WHERE id=?", [primaryID]) {
+            var primaryVerificationReasons = "[]"
+            var duplicateVerificationReasons = "[]"
+            var primaryVerifierVersion: String?
+            var duplicateVerifierVersion: String?
+            var primaryVerifiedAt: TimeInterval?
+            var duplicateVerifiedAt: TimeInterval?
+            var body: String?
+            var context = ""
+            queryLocked("""
+                SELECT review_status,verification_status,fingerprint,canonical_text,subject,predicate,object_text,
+                       verification_reasons_json,verifier_version,verified_at,payload_json
+                FROM knowledge_units WHERE id=?
+                """, [primaryID]) {
                 primaryStatus = $0[0].flatMap(KnowledgeReviewStatus.init(rawValue:))
-                primaryFingerprint = $0[1]
+                primaryVerification = $0[1].flatMap(KnowledgeVerificationStatus.init(rawValue:))
+                primaryFingerprint = $0[2]
+                body = $0[3]
+                context = [$0[4], $0[5], $0[6], KnowledgeTopicContext.from(payloadJSON: $0[10] ?? "{}")?.searchText].compactMap { $0 }.joined(separator: " ")
+                primaryVerificationReasons = $0[7] ?? "[]"
+                primaryVerifierVersion = $0[8]
+                primaryVerifiedAt = $0[9].flatMap(Double.init)
             }
-            queryLocked("SELECT review_status,fingerprint FROM knowledge_units WHERE id=?", [duplicateID]) {
+            queryLocked("""
+                SELECT review_status,verification_status,fingerprint,
+                       verification_reasons_json,verifier_version,verified_at
+                FROM knowledge_units WHERE id=?
+                """, [duplicateID]) {
                 duplicateStatus = $0[0].flatMap(KnowledgeReviewStatus.init(rawValue:))
-                duplicateFingerprint = $0[1]
+                duplicateVerification = $0[1].flatMap(KnowledgeVerificationStatus.init(rawValue:))
+                duplicateFingerprint = $0[2]
+                duplicateVerificationReasons = $0[3] ?? "[]"
+                duplicateVerifierVersion = $0[4]
+                duplicateVerifiedAt = $0[5].flatMap(Double.init)
             }
             guard let primaryStatus, let duplicateStatus,
                   primaryStatus != .rejected, duplicateStatus != .rejected,
                   primaryFingerprint == duplicateFingerprint else { return }
+            let primaryTrusted = [.confirmed, .edited].contains(primaryStatus)
+                && primaryVerification == .passed
+            let duplicateTrusted = [.confirmed, .edited].contains(duplicateStatus)
+                && duplicateVerification == .passed
             let mergedStatus: KnowledgeReviewStatus
-            if primaryStatus == .edited || duplicateStatus == .edited { mergedStatus = .edited }
-            else if primaryStatus == .confirmed || duplicateStatus == .confirmed { mergedStatus = .confirmed }
+            if primaryTrusted { mergedStatus = primaryStatus }
+            else if duplicateTrusted { mergedStatus = duplicateStatus }
             else { mergedStatus = .candidate }
+            let mergedVerification: KnowledgeVerificationStatus
+            if primaryVerification == .passed || duplicateVerification == .passed {
+                mergedVerification = .passed
+            } else if primaryVerification == .blocked || duplicateVerification == .blocked {
+                mergedVerification = .blocked
+            } else {
+                mergedVerification = .pending
+            }
+            let useDuplicateVerification = duplicateTrusted
+                || (!primaryTrusted && primaryVerification != .passed && duplicateVerification == .passed)
+            let mergedVerificationReasons = useDuplicateVerification
+                ? duplicateVerificationReasons : primaryVerificationReasons
+            let mergedVerifierVersion = useDuplicateVerification
+                ? duplicateVerifierVersion : primaryVerifierVersion
+            let mergedVerifiedAt = useDuplicateVerification
+                ? duplicateVerifiedAt : primaryVerifiedAt
+            var meetingID: String?
+            var meetingTitle: String?
+            queryLocked("""
+                SELECT ss.meeting_id,COALESCE(f.title,ss.meeting_id)
+                FROM unit_sources us
+                JOIN source_segments ss ON ss.id=us.segment_id
+                LEFT JOIN knowledge_fts f ON f.doc_type='segment' AND f.doc_id=ss.id
+                WHERE us.unit_id IN (?,?) ORDER BY us.unit_id=? DESC LIMIT 1
+                """, [primaryID, duplicateID, primaryID]) {
+                meetingID = $0[0]
+                meetingTitle = $0[1]
+            }
+            var projectID: String?
+            queryLocked("""
+                SELECT project_id FROM unit_projects WHERE unit_id IN (?,?)
+                ORDER BY review_status='confirmed' DESC,relevance DESC LIMIT 1
+                """, [primaryID, duplicateID]) { projectID = $0[0] }
 
             ok = transactionLocked {
                 guard runLocked("""
@@ -1192,11 +1401,18 @@ final class DB {
                             WHEN unit_projects.review_status='candidate' OR excluded.review_status='candidate'
                             THEN 'candidate' ELSE 'rejected' END
                     """, [primaryID, duplicateID]),
-                      runLocked("UPDATE knowledge_units SET review_status=?,updated_at=? WHERE id=?",
-                                [mergedStatus.rawValue, now, primaryID]),
+                      runLocked("""
+                          UPDATE knowledge_units SET
+                              review_status=?,verification_status=?,verification_reasons_json=?,
+                              verifier_version=?,verified_at=?,updated_at=?
+                          WHERE id=?
+                          """, [mergedStatus.rawValue, mergedVerification.rawValue,
+                                  mergedVerificationReasons, mergedVerifierVersion,
+                                  mergedVerifiedAt, now, primaryID]),
                       runLocked("UPDATE knowledge_units SET review_status='rejected',updated_at=? WHERE id=?",
                                 [now, duplicateID]),
-                      runLocked("DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id=?", [duplicateID]),
+                      runLocked("DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id IN (?,?)",
+                                [primaryID, duplicateID]),
                       runLocked("""
                     INSERT INTO unit_relations(
                         from_unit_id,to_unit_id,relation_kind,review_status,reason,payload_json,created_at
@@ -1212,10 +1428,19 @@ final class DB {
                             feedback.action.rawValue, feedback.beforeJSON, feedback.afterJSON,
                             feedback.reason, feedback.actor, feedback.createdAt])
                 else { return false }
-                if mergedStatus == .confirmed || mergedStatus == .edited {
-                    return runLocked("UPDATE unit_sources SET verified=1 WHERE unit_id=?", [primaryID])
+                if [.confirmed, .edited].contains(mergedStatus) {
+                    guard mergedVerification == .passed,
+                          let meetingID, let meetingTitle, let body else { return false }
+                    return runLocked("""
+                        UPDATE unit_sources SET verified=(evidence_role='support') WHERE unit_id=?
+                        """, [primaryID])
+                        && runLocked("""
+                            INSERT INTO knowledge_fts(
+                                doc_type,doc_id,meeting_id,project_id,title,body,context
+                            ) VALUES('unit',?,?,?,?,?,?)
+                            """, [primaryID, meetingID, projectID, meetingTitle, body, context])
                 }
-                return true
+                return runLocked("UPDATE unit_sources SET verified=0 WHERE unit_id=?", [primaryID])
             }
         }
         return ok
@@ -1255,13 +1480,18 @@ final class DB {
         if let existingStatus, existingStatus != .candidate { return true }
         guard runLocked("""
             INSERT INTO knowledge_units(
-                id,kind,canonical_text,subject,predicate,object_text,numeric_value,value_unit,
-                owner,due_text,valid_from,valid_to,observed_at,review_status,evidence_level,
-                conflict_status,sensitivity,fingerprint,revision,extractor_version,prompt_version,
-                schema_version,model,payload_json,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                id,kind,claim_type,epistemic_status,attributed_to,canonical_text,subject,predicate,
+                object_text,numeric_value,value_unit,owner,due_text,valid_from,valid_to,observed_at,
+                observation_basis,review_status,evidence_level,verification_status,
+                verification_reasons_json,verifier_version,verified_at,conflict_status,sensitivity,
+                fingerprint,revision,extractor_version,prompt_version,schema_version,model,payload_json,
+                created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 kind=excluded.kind,
+                claim_type=excluded.claim_type,
+                epistemic_status=excluded.epistemic_status,
+                attributed_to=excluded.attributed_to,
                 canonical_text=excluded.canonical_text,
                 subject=excluded.subject,
                 predicate=excluded.predicate,
@@ -1273,8 +1503,13 @@ final class DB {
                 valid_from=excluded.valid_from,
                 valid_to=excluded.valid_to,
                 observed_at=excluded.observed_at,
+                observation_basis=excluded.observation_basis,
                 review_status=excluded.review_status,
                 evidence_level=excluded.evidence_level,
+                verification_status=excluded.verification_status,
+                verification_reasons_json=excluded.verification_reasons_json,
+                verifier_version=excluded.verifier_version,
+                verified_at=excluded.verified_at,
                 conflict_status=excluded.conflict_status,
                 sensitivity=excluded.sensitivity,
                 fingerprint=excluded.fingerprint,
@@ -1285,10 +1520,13 @@ final class DB {
                 model=excluded.model,
                 payload_json=excluded.payload_json,
                 updated_at=excluded.updated_at
-            """, [unit.id, unit.kind.rawValue, unit.canonicalText, unit.subject,
-                    unit.predicate, unit.objectText, unit.numericValue, unit.valueUnit,
+            """, [unit.id, unit.kind.rawValue, unit.claimType.rawValue,
+                    unit.epistemicStatus.rawValue, unit.attributedTo, unit.canonicalText,
+                    unit.subject, unit.predicate, unit.objectText, unit.numericValue, unit.valueUnit,
                     unit.owner, unit.dueText, unit.validFrom, unit.validTo, unit.observedAt,
-                    unit.reviewStatus.rawValue, unit.evidenceLevel.rawValue,
+                    unit.observationBasis.rawValue, unit.reviewStatus.rawValue,
+                    unit.evidenceLevel.rawValue, unit.verificationStatus.rawValue,
+                    unit.verificationReasonsJSON, unit.verifierVersion, unit.verifiedAt,
                     unit.conflictStatus.rawValue, unit.sensitivity.rawValue, unit.fingerprint,
                     unit.revision, unit.extractorVersion, unit.promptVersion, unit.schemaVersion,
                     unit.model, unit.payloadJSON, unit.createdAt, unit.updatedAt]),
@@ -1331,11 +1569,10 @@ final class DB {
         guard runLocked("DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id=?", [unit.id]) else {
             return false
         }
-        if unit.reviewStatus != .rejected {
+        if unit.isTrusted {
             let projectID = commit.projectLinks.first(where: { $0.reviewStatus == .confirmed })?.projectID
                 ?? commit.projectLinks.first?.projectID
-            let context = [unit.subject, unit.predicate, unit.objectText]
-                .compactMap { $0 }.joined(separator: " ")
+            let context = unit.searchContext
             guard runLocked("""
                 INSERT INTO knowledge_fts(
                     doc_type,doc_id,meeting_id,project_id,title,body,context
@@ -1346,33 +1583,99 @@ final class DB {
         return true
     }
 
+    @discardableResult
+    func archiveSupersededKnowledgeCandidates(sourceID: String,
+                                               keepingExtractorVersion: String,
+                                               now: TimeInterval) -> Bool {
+        guard knowledgeHealthy else { return false }
+        var ok = false
+        q.sync {
+            let replacementCount = scalarIntLocked("""
+                SELECT COUNT(DISTINCT u.id) FROM knowledge_units u
+                JOIN unit_sources us ON us.unit_id=u.id
+                JOIN source_segments ss ON ss.id=us.segment_id
+                WHERE ss.source_id=? AND u.review_status='candidate' AND u.extractor_version=?
+                """, [sourceID, keepingExtractorVersion])
+            guard replacementCount > 0 else {
+                ok = true
+                return
+            }
+            ok = transactionLocked {
+                let condition = """
+                    review_status='candidate' AND extractor_version<>? AND EXISTS(
+                        SELECT 1 FROM unit_sources us
+                        JOIN source_segments ss ON ss.id=us.segment_id
+                        WHERE us.unit_id=knowledge_units.id AND ss.source_id=?
+                    )
+                    """
+                guard runLocked("""
+                    INSERT INTO feedback_events(
+                        id,target_type,target_id,action,before_json,after_json,reason,actor,created_at
+                    )
+                    SELECT lower(hex(randomblob(16))),'knowledge_unit',id,'reject',
+                           '{"review_status":"candidate"}',
+                           '{"review_status":"rejected","reason":"superseded_extraction"}',
+                           '新版抽取已完整替代旧候选','system',?
+                    FROM knowledge_units WHERE \(condition)
+                    """, [now, keepingExtractorVersion, sourceID]),
+                      runLocked("""
+                          DELETE FROM knowledge_fts WHERE doc_type='unit' AND doc_id IN (
+                              SELECT id FROM knowledge_units WHERE \(condition)
+                          )
+                          """, [keepingExtractorVersion, sourceID]),
+                      runLocked("""
+                          UPDATE knowledge_units SET review_status='rejected',verification_status='blocked',
+                              verification_reasons_json='["superseded_extraction"]',
+                              verifier_version=?,verified_at=NULL,updated_at=?
+                          WHERE \(condition)
+                          """, [KnowledgeQualificationValidator.version, now,
+                                  keepingExtractorVersion, sourceID]) else { return false }
+                return true
+            }
+        }
+        return ok
+    }
+
     func knowledgeUnits() -> [KnowledgeUnit] {
         guard knowledgeHealthy else { return [] }
         var output: [KnowledgeUnit] = []
         q.sync {
             queryLocked("""
-                SELECT id,kind,canonical_text,subject,predicate,object_text,numeric_value,value_unit,
-                       owner,due_text,valid_from,valid_to,observed_at,review_status,evidence_level,
-                       conflict_status,sensitivity,fingerprint,revision,extractor_version,prompt_version,
-                       schema_version,model,payload_json,created_at,updated_at
+                SELECT id,kind,claim_type,epistemic_status,attributed_to,canonical_text,subject,predicate,
+                       object_text,numeric_value,value_unit,owner,due_text,valid_from,valid_to,observed_at,
+                       observation_basis,review_status,evidence_level,verification_status,
+                       verification_reasons_json,verifier_version,verified_at,conflict_status,sensitivity,
+                       fingerprint,revision,extractor_version,prompt_version,schema_version,model,payload_json,
+                       created_at,updated_at
                 FROM knowledge_units ORDER BY observed_at DESC, created_at DESC
                 """) { row in
-                guard let id = row[0], let kindRaw = row[1], let kind = KnowledgeKind(rawValue: kindRaw),
-                      let text = row[2], let observed = Double(row[12] ?? ""),
-                      let reviewRaw = row[13], let review = KnowledgeReviewStatus(rawValue: reviewRaw),
-                      let evidenceRaw = row[14], let evidence = KnowledgeEvidenceLevel(rawValue: evidenceRaw),
-                      let conflictRaw = row[15], let conflict = KnowledgeConflictStatus(rawValue: conflictRaw),
-                      let sensitivityRaw = row[16], let sensitivity = KnowledgeSensitivity(rawValue: sensitivityRaw),
-                      let fingerprint = row[17], let revision = Int(row[18] ?? ""),
-                      let extractor = row[19], let prompt = row[20], let schema = Int(row[21] ?? ""),
-                      let model = row[22], let payload = row[23], let created = Double(row[24] ?? ""),
-                      let updated = Double(row[25] ?? "") else { return }
+                guard let id = row[0],
+                      let kindRaw = row[1], let kind = KnowledgeKind(rawValue: kindRaw),
+                      let claimRaw = row[2], let claimType = KnowledgeClaimType(rawValue: claimRaw),
+                      let epistemicRaw = row[3],
+                      let epistemic = KnowledgeEpistemicStatus(rawValue: epistemicRaw),
+                      let text = row[5], let observed = Double(row[15] ?? ""),
+                      let basisRaw = row[16], let basis = KnowledgeObservationBasis(rawValue: basisRaw),
+                      let reviewRaw = row[17], let review = KnowledgeReviewStatus(rawValue: reviewRaw),
+                      let evidenceRaw = row[18], let evidence = KnowledgeEvidenceLevel(rawValue: evidenceRaw),
+                      let verificationRaw = row[19],
+                      let verification = KnowledgeVerificationStatus(rawValue: verificationRaw),
+                      let reasons = row[20],
+                      let conflictRaw = row[23], let conflict = KnowledgeConflictStatus(rawValue: conflictRaw),
+                      let sensitivityRaw = row[24], let sensitivity = KnowledgeSensitivity(rawValue: sensitivityRaw),
+                      let fingerprint = row[25], let revision = Int(row[26] ?? ""),
+                      let extractor = row[27], let prompt = row[28], let schema = Int(row[29] ?? ""),
+                      let model = row[30], let payload = row[31], let created = Double(row[32] ?? ""),
+                      let updated = Double(row[33] ?? "") else { return }
                 output.append(KnowledgeUnit(
-                    id: id, kind: kind, canonicalText: text, subject: row[3], predicate: row[4],
-                    objectText: row[5], numericValue: row[6].flatMap(Double.init), valueUnit: row[7],
-                    owner: row[8], dueText: row[9], validFrom: row[10].flatMap(Double.init),
-                    validTo: row[11].flatMap(Double.init), observedAt: observed,
-                    reviewStatus: review, evidenceLevel: evidence, conflictStatus: conflict,
+                    id: id, kind: kind, claimType: claimType, epistemicStatus: epistemic,
+                    attributedTo: row[4], canonicalText: text, subject: row[6], predicate: row[7],
+                    objectText: row[8], numericValue: row[9].flatMap(Double.init), valueUnit: row[10],
+                    owner: row[11], dueText: row[12], validFrom: row[13].flatMap(Double.init),
+                    validTo: row[14].flatMap(Double.init), observedAt: observed, observationBasis: basis,
+                    reviewStatus: review, evidenceLevel: evidence, verificationStatus: verification,
+                    verificationReasonsJSON: reasons, verifierVersion: row[21],
+                    verifiedAt: row[22].flatMap(Double.init), conflictStatus: conflict,
                     sensitivity: sensitivity, fingerprint: fingerprint, revision: revision,
                     extractorVersion: extractor, promptVersion: prompt, schemaVersion: schema,
                     model: model, payloadJSON: payload, createdAt: created, updatedAt: updated))
@@ -1795,7 +2098,12 @@ final class DB {
                     (SELECT COUNT(*) FROM extraction_diagnostics x
                         LEFT JOIN extraction_jobs j ON j.id=x.job_id
                         LEFT JOIN source_documents d ON d.id=x.source_id
-                        WHERE j.id IS NULL OR d.id IS NULL)
+                        WHERE j.id IS NULL OR d.id IS NULL) +
+                    (SELECT COUNT(*) FROM knowledge_units u
+                        WHERE u.review_status <> 'rejected' AND NOT EXISTS(
+                            SELECT 1 FROM unit_sources us
+                            WHERE us.unit_id=u.id AND us.evidence_role='support'
+                        ))
                 """)
             missingFTSRows = scalarIntLocked("""
                 SELECT
@@ -1805,7 +2113,8 @@ final class DB {
                             WHERE f.doc_type='segment' AND f.doc_id=s.id
                         )) +
                     (SELECT COUNT(*) FROM knowledge_units u
-                        WHERE u.review_status <> 'rejected' AND NOT EXISTS(
+                        WHERE u.review_status IN ('confirmed','edited')
+                          AND u.verification_status='passed' AND NOT EXISTS(
                             SELECT 1 FROM knowledge_fts f
                             WHERE f.doc_type='unit' AND f.doc_id=u.id
                         ))
@@ -1816,7 +2125,9 @@ final class DB {
                            SELECT 1 FROM source_segments s WHERE s.id=f.doc_id
                        ))
                    OR (f.doc_type='unit' AND NOT EXISTS(
-                           SELECT 1 FROM knowledge_units u WHERE u.id=f.doc_id AND u.review_status <> 'rejected'
+                           SELECT 1 FROM knowledge_units u WHERE u.id=f.doc_id
+                             AND u.review_status IN ('confirmed','edited')
+                             AND u.verification_status='passed'
                        ))
                    OR f.doc_type NOT IN ('segment','unit')
                 """)

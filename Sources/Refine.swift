@@ -297,9 +297,9 @@ enum Refine {
     }
 
     /// 唯一 LLM 出口：内置服务（设备额度）或 BYOK（用户自己的 OpenAI 兼容端点）。
-    static func chatOnce(system: String, user: String, maxTokens: Int) throws -> String {
+    static func chatOnce(system: String, user: String, maxTokens: Int, timeoutSeconds: Int = 180, jsonOutput: Bool = false) throws -> String {
         let byok = AIBackend.isBYOK
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "model": byok ? AIBackend.model : model,
             "temperature": 0.2,
             "max_tokens": maxTokens,
@@ -308,6 +308,7 @@ enum Refine {
                 ["role": "user", "content": user],
             ],
         ]
+        if jsonOutput { payload["response_format"] = ["type": "json_object"] }
         let body = try JSONSerialization.data(withJSONObject: payload)
 
         let proc = Process()
@@ -315,7 +316,7 @@ enum Refine {
         if byok {
             // 标准 TLS，不做证书豁免；Key 来自钥匙串
             proc.arguments = [
-                "-s", "--max-time", "180",
+                "-s", "--max-time", String(timeoutSeconds),
                 AIBackend.chatURL,
                 "-H", "Authorization: Bearer \(AIBackend.apiKey ?? "")",
                 "-H", "Content-Type: application/json",
@@ -323,7 +324,7 @@ enum Refine {
             ]
         } else {
             proc.arguments = [
-                "-sk", "--max-time", "180",
+                "-sk", "--max-time", String(timeoutSeconds),
                 "https://\(ip)/v1/chat/completions",
                 "-H", "Host: \(host)",
                 "-H", "Authorization: Bearer \(SikuCloud.deviceToken)",

@@ -48,6 +48,7 @@ struct RootView: View {
         case .knowledge: KnowledgeScreen()
         case .calendar: CalendarScreen()
         case .detail:   DetailScreen()
+        case .timeline: MeetingTimelineScreen()
         case .todos:    TodosScreen()
         case .followup: FollowupScreen()
         case .weekly:   WeeklyScreen()

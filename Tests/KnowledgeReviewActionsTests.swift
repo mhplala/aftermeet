@@ -22,10 +22,12 @@ final class KnowledgeReviewActionsTests: XCTestCase {
         XCTAssertTrue(store.saveSource(
             bundle.document, segments: bundle.segments, meetingTitle: "虚构评审"))
         let unit = KnowledgeUnit(
-            id: "review-unit", kind: .decision, canonicalText: "确认虚构决策",
+            id: "review-unit", kind: .decision, claimType: .decision,
+            canonicalText: "确认虚构决策",
             subject: nil, predicate: nil, objectText: nil, numericValue: nil,
             valueUnit: nil, owner: nil, dueText: nil, validFrom: nil, validTo: nil,
             observedAt: 10, reviewStatus: .candidate, evidenceLevel: .direct,
+            verificationStatus: .passed, verifierVersion: "fixture", verifiedAt: 10,
             conflictStatus: .none, sensitivity: .normal, fingerprint: "review-fp",
             revision: 1, extractorVersion: "v1", promptVersion: "v1", schemaVersion: 1,
             model: "fixture", payloadJSON: "{}", createdAt: 10, updatedAt: 10)
@@ -58,6 +60,37 @@ final class KnowledgeReviewActionsTests: XCTestCase {
         XCTAssertTrue(fixture.store.confirmUnit(id: fixture.unit.id, at: 30))
         XCTAssertEqual(fixture.store.feedback(
             targetType: "knowledge_unit", targetID: fixture.unit.id).count, 1)
+    }
+
+    func testConfirmAcceptsCanonicallyEquivalentEvidenceQuote() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AfterMeet-Review-Unicode-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = KnowledgeStore(database: DB(
+            databaseURL: directory.appendingPathComponent("aftermeet.db")))
+        let bundle = KnowledgeSegmenter.plainTextSourceBundle(
+            content: "确认 Café 决策", meetingID: "unicode-meeting", observedAt: 10)
+        XCTAssertTrue(store.saveSource(bundle.document, segments: bundle.segments, meetingTitle: "Unicode"))
+        let unit = KnowledgeUnit(
+            id: "unicode-unit", kind: .decision, claimType: .decision,
+            canonicalText: "确认 Café 决策", subject: nil, predicate: nil, objectText: nil,
+            numericValue: nil, valueUnit: nil, owner: nil, dueText: nil,
+            validFrom: nil, validTo: nil, observedAt: 10, reviewStatus: .candidate,
+            evidenceLevel: .direct, verificationStatus: .passed,
+            verifierVersion: "fixture", verifiedAt: 10, conflictStatus: .none,
+            sensitivity: .normal, fingerprint: "unicode-fp", revision: 1,
+            extractorVersion: "v1", promptVersion: "v1", schemaVersion: 1,
+            model: "fixture", payloadJSON: "{}", createdAt: 10, updatedAt: 10)
+        let decomposedQuote = "确认 Cafe\u{301} 决策"
+        let evidence = KnowledgeUnitSource(
+            unitID: unit.id, segmentID: bundle.segments[0].id, evidenceRole: .support,
+            quote: decomposedQuote, weight: 1, verified: false)
+        XCTAssertTrue(store.saveUnit(
+            unit, evidence: [evidence], projectLinks: [],
+            meetingID: bundle.document.meetingID, meetingTitle: "Unicode"))
+
+        XCTAssertTrue(store.confirmUnit(id: unit.id, at: 20))
+        XCTAssertEqual(store.units().first?.reviewStatus, .confirmed)
     }
 
     func testEditCreatesRevisionAuditAndFTSWithoutChangingSourceSegment() throws {
@@ -137,7 +170,9 @@ final class KnowledgeReviewActionsTests: XCTestCase {
             predicate: fixture.unit.predicate, objectText: fixture.unit.objectText,
             numericValue: nil, valueUnit: nil, owner: nil, dueText: nil,
             validFrom: nil, validTo: nil, observedAt: 11,
-            reviewStatus: .confirmed, evidenceLevel: .direct, conflictStatus: .none,
+            reviewStatus: .confirmed, evidenceLevel: .direct,
+            verificationStatus: .passed, verifierVersion: "fixture", verifiedAt: 11,
+            conflictStatus: .none,
             sensitivity: .normal, fingerprint: fixture.unit.fingerprint, revision: 1,
             extractorVersion: "v2", promptVersion: "v2", schemaVersion: 1,
             model: "fixture", payloadJSON: "{}", createdAt: 11, updatedAt: 11)
@@ -147,7 +182,7 @@ final class KnowledgeReviewActionsTests: XCTestCase {
         XCTAssertTrue(fixture.store.saveUnit(
             duplicate, evidence: [duplicateEvidence], projectLinks: [],
             meetingID: secondBundle.document.meetingID, meetingTitle: "第二场虚构评审"))
-        XCTAssertEqual(fixture.store.search(tokens: ["确认虚构决策"]).count, 2)
+        XCTAssertEqual(fixture.store.search(tokens: ["确认虚构决策"]).count, 1)
 
         XCTAssertTrue(fixture.store.mergeUnits(
             primaryID: fixture.unit.id,
@@ -202,9 +237,7 @@ final class KnowledgeReviewActionsTests: XCTestCase {
             fixture.store.units().first { $0.id == fixture.unit.id }?.reviewStatus,
             .candidate)
         XCTAssertTrue(fixture.store.evidence(unitID: fixture.unit.id).allSatisfy { !$0.verified })
-        XCTAssertEqual(fixture.store.search(tokens: ["确认虚构决策"]), [
-            DB.KnowledgeFTSHit(docType: "unit", docID: fixture.unit.id)
-        ])
+        XCTAssertTrue(fixture.store.search(tokens: ["确认虚构决策"]).isEmpty)
         XCTAssertEqual(fixture.store.feedback(
             targetType: "knowledge_unit", targetID: fixture.unit.id).map(\.action), [.reject, .restore])
     }
@@ -222,6 +255,8 @@ final class KnowledgeReviewActionsTests: XCTestCase {
         XCTAssertEqual(appStore.knowledgeInboxCount(.processed), 1)
 
         appStore.restoreKnowledgeUnit(id: fixture.unit.id)
+        XCTAssertEqual(appStore.knowledgeInboxCount(.pending), 0)
+        appStore.showLegacyKnowledgeFragments = true
         XCTAssertEqual(appStore.knowledgeInboxCount(.pending), 1)
         XCTAssertEqual(appStore.knowledgeInboxCount(.processed), 0)
     }

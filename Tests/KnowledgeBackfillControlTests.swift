@@ -13,7 +13,7 @@ private struct EmptyPilotClient: KnowledgeExtractionClient {
             return line.dropFirst(name.count + 1).trimmingCharacters(in: .whitespaces)
         }
         let object: [String: Any] = [
-            "schema_version": 1,
+            "schema_version": 2,
             "source_hash": field("source_hash"),
             "chunk_index": Int(field("chunk_index"))!,
             "units": []
@@ -51,7 +51,7 @@ final class KnowledgeBackfillControlTests: XCTestCase {
             note: .processing())
     }
 
-    func testPilotPreparesAtMostLimitAndSkipsSensitiveShortAndExistingJobs() throws {
+    func testPilotPreparesAtMostLimitAndSkipsSensitiveAndShortMeetings() throws {
         let (appStore, knowledgeStore, directory) = makeAppStore()
         defer { try? FileManager.default.removeItem(at: directory) }
         let meetings = [
@@ -98,7 +98,7 @@ final class KnowledgeBackfillControlTests: XCTestCase {
         XCTAssertEqual(reopened.knowledgeBackfillProgress.completed, 2)
     }
 
-    func testPilotQueueDoesNotConsumeUnrelatedPendingJob() async throws {
+    func testQueueAlsoConsumesOrdinaryPendingJobWithoutExpandingPilot() async throws {
         let (appStore, knowledgeStore, directory) = makeAppStore()
         defer { try? FileManager.default.removeItem(at: directory) }
         let unrelatedBundle = KnowledgeSegmenter.plainTextSourceBundle(
@@ -125,9 +125,38 @@ final class KnowledgeBackfillControlTests: XCTestCase {
 
         XCTAssertEqual(appStore.knowledgeBackfillProgress.total, 1)
         XCTAssertEqual(appStore.knowledgeBackfillProgress.completed, 1)
-        XCTAssertEqual(knowledgeStore.jobs().first { $0.id == unrelatedJob.id }?.state, .pending)
+        XCTAssertEqual(knowledgeStore.jobs().first { $0.id == unrelatedJob.id }?.state, .done)
         XCTAssertFalse(knowledgeStore.pilotJobIDs().contains(unrelatedJob.id))
         XCTAssertEqual(knowledgeStore.pilotJobIDs().count, 1)
+    }
+
+    func testDisablingKnowledgeStopsBeforeNextQueuedSource() async throws {
+        let (appStore, _, directory) = makeAppStore()
+        defer {
+            KnowledgeFeatureFlags.setEnabled(true)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let meetings = [
+            meeting(id: "disable-a", title: "普通周会 A", timestamp: 20),
+            meeting(id: "disable-b", title: "普通周会 B", timestamp: 10)
+        ]
+        XCTAssertEqual(appStore.prepareKnowledgePilot(from: meetings, limit: 10), 2)
+        appStore.knowledgeBackfillPaused = false
+        let task = Task {
+            await appStore.runKnowledgeQueue(client: EmptyPilotClient(delayNanoseconds: 50_000_000))
+        }
+        for _ in 0..<100 {
+            if appStore.knowledgeBackfillRunning { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+
+        appStore.setKnowledgeEnabled(false)
+        await task.value
+
+        XCTAssertFalse(appStore.knowledgeEnabled)
+        XCTAssertTrue(appStore.knowledgeBackfillPaused)
+        XCTAssertEqual(appStore.knowledgeBackfillProgress.completed, 1)
+        XCTAssertEqual(appStore.knowledgeBackfillProgress.waiting, 1)
     }
 
     func testPauseStopsAfterCurrentSourceAndLeavesRemainingJobPending() async throws {

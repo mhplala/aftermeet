@@ -56,7 +56,7 @@ struct KnowledgeScreen: View {
                 .font(Theme.display(36, .semibold))
                 .tracking(-0.8)
                 .foregroundColor(Theme.inkPrimary)
-            Text("把会议里的事实、决策与行动连接成可追溯、可更新的工作脉络。")
+            Text("候选是模型提出的主张；只有证据验证通过并由你确认后，才会成为可检索的知识。")
                 .font(Theme.display(15, .regular))
                 .foregroundColor(Theme.inkSecondary)
         }
@@ -64,7 +64,8 @@ struct KnowledgeScreen: View {
 
     private var tabBar: some View {
         HStack(spacing: 3) {
-            tab(.inbox, title: "确认箱", count: candidates.count)
+            tab(.inbox, title: "候选确认", count: candidates.count)
+            tab(.library, title: "知识库", count: store.knowledgeUnits.filter(\.isTrusted).count)
             tab(.projects, title: "项目", count: store.knowledgeProjects.filter { $0.status != .archived }.count)
             tab(.ask, title: "问我的工作", count: nil)
         }
@@ -73,7 +74,7 @@ struct KnowledgeScreen: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous)
             .strokeBorder(Theme.borderWhisper, lineWidth: 1))
-        .frame(maxWidth: 430, alignment: .leading)
+        .frame(maxWidth: 560, alignment: .leading)
     }
 
     private func tab(_ tab: KnowledgeTab, title: String, count: Int?) -> some View {
@@ -110,9 +111,12 @@ struct KnowledgeScreen: View {
     }
 
     @ViewBuilder private var jobStatus: some View {
-        let running = store.knowledgeJobs.filter { $0.state == .running }.count
-        let waiting = store.knowledgeJobs.filter { $0.state == .pending || $0.state == .retry }.count
-        let failed = store.knowledgeJobs.filter { $0.state == .failed }.count
+        let currentJobs = store.knowledgeJobs.filter {
+            $0.extractorVersion == KnowledgeExtractionPrompt.extractorVersion
+        }
+        let running = currentJobs.filter { $0.state == .running }.count
+        let waiting = currentJobs.filter { $0.state == .pending || $0.state == .retry }.count
+        let failed = currentJobs.filter { $0.state == .failed }.count
         if running + waiting + failed > 0 {
             HStack(spacing: 9) {
                 if running > 0 { ProgressView().controlSize(.small) }
@@ -143,6 +147,8 @@ struct KnowledgeScreen: View {
         switch store.knowledgeTab {
         case .inbox:
             KnowledgeInboxView()
+        case .library:
+            KnowledgeLibraryView()
         case .projects:
             if store.knowledgeProjects.filter({ $0.status != .archived }).isEmpty {
                 empty(
@@ -184,5 +190,145 @@ struct KnowledgeScreen: View {
                 Spacer()
             }
         }
+    }
+}
+
+struct KnowledgeLibraryView: View {
+    @EnvironmentObject var store: AppStore
+
+    private var items: [KnowledgeInboxItem] {
+        store.knowledgeInboxItems.filter { $0.unit.isTrusted }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "checkmark.seal")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Theme.green700)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("这里才是可信知识")
+                        .font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkPrimary)
+                    Text("每条知识都是一个原子主张，并保留原文证据、说话人、时间和验证状态。候选不会进入这里，也不会进入全局检索。")
+                        .font(Theme.ui(11.5)).foregroundColor(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+            .padding(13)
+            .background(Theme.warmWhite)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+
+            if items.isEmpty {
+                Card(padding: 0) {
+                    EmptyState(
+                        icon: "checkmark.seal",
+                        title: "还没有可信知识",
+                        message: "候选通过语义与证据验证，并由你确认后，才会出现在这里。")
+                }
+            } else {
+                LazyVStack(spacing: 10) {
+                    ForEach(items) { item in
+                        knowledgeCard(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func knowledgeCard(_ item: KnowledgeInboxItem) -> some View {
+        let evidence = item.evidenceContexts.first(where: { $0.link.evidenceRole == .support })
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 7) {
+                Text(item.unit.reviewStatus == .edited ? "人工修订" : "已确认")
+                    .font(Theme.mono(9.5, .semibold)).foregroundColor(Theme.green700)
+                Text(claimTypeLabel(item.unit.claimType))
+                    .font(Theme.mono(9.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Theme.warmWhite2).clipShape(Capsule())
+                if item.unit.epistemicStatus != .certain {
+                    Text(epistemicLabel(item.unit.epistemicStatus))
+                        .font(Theme.mono(9.5, .semibold)).foregroundColor(Theme.warn500)
+                }
+                Spacer()
+                Text(dateLabel(item.unit.observedAt))
+                    .font(Theme.mono(9.5)).foregroundColor(Theme.inkTertiary)
+            }
+
+            Text(item.unit.canonicalText)
+                .font(Theme.ui(14, .medium)).foregroundColor(Theme.inkPrimary)
+                .lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+
+            let attributes = [
+                item.unit.attributedTo.map { "归属 · \($0)" },
+                item.unit.owner.map { "负责人 · \($0)" },
+                item.unit.dueText.map { "时间 · \($0)" }
+            ].compactMap { $0 }
+            if !attributes.isEmpty {
+                HStack(spacing: 7) {
+                    ForEach(attributes, id: \.self) { value in
+                        Text(value).font(Theme.mono(9.5)).foregroundColor(Theme.inkSecondary)
+                    }
+                }
+            }
+
+            if let evidence {
+                if let context = item.unit.topicContext {
+                    KnowledgeTopicContextView(context: context, evidence: item.evidenceContexts)
+                } else {
+                    Text("旧版知识 · 尚未按话题重新提炼").font(Theme.ui(11)).foregroundColor(Theme.inkTertiary)
+                    KnowledgeMeetingContext(source: evidence.source)
+                }
+
+                Button { store.openKnowledgeEvidence(evidence) } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("“\(evidence.link.quote)”")
+                            .font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
+                            .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                        Text("查看会议背景与完整原文")
+                            .font(Theme.mono(9.5, .semibold)).foregroundColor(Theme.inkTertiary)
+                    }
+                    .padding(11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.warmWhite)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(17)
+        .background(Theme.white)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rLG, style: .continuous))
+        .hairline(Theme.borderWhisper, radius: Theme.rLG)
+        .whisperShadow()
+    }
+
+    private func claimTypeLabel(_ value: KnowledgeClaimType) -> String {
+        switch value {
+        case .observedFact: return "已观察事实"
+        case .attributedOpinion: return "归属意见"
+        case .forecast: return "预测"
+        case .proposal: return "提议"
+        case .decision: return "决定"
+        case .commitment: return "承诺"
+        case .statusUpdate: return "状态更新"
+        case .openQuestion: return "待回答问题"
+        }
+    }
+
+    private func epistemicLabel(_ value: KnowledgeEpistemicStatus) -> String {
+        switch value {
+        case .certain: return "确定"
+        case .soft: return "弱表态"
+        case .tentative: return "试探"
+        case .conditional: return "有条件"
+        }
+    }
+
+    private func dateLabel(_ timestamp: TimeInterval) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日"
+        return formatter.string(from: Date(timeIntervalSince1970: timestamp))
     }
 }

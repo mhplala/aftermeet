@@ -142,7 +142,10 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
 
     /// User (or calendar) names the meeting — rewrite the file's title line.
     func setMeetingName(_ name: String) {
-        DispatchQueue.main.async { self.meetingName = name }
+        DispatchQueue.main.async {
+            self.meetingName = name
+            MeetingTimelineStore.shared.rename(sessionID: self.captureSessionID, title: name)
+        }
         let url = sessionURL                    // 调用时快照，不能等队列执行时再读当前会话
         let headerDate = sessionHeaderDate
         inferQueue.async {
@@ -216,12 +219,19 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         dbg("=== start ===", reset: true)
         let detected = LarkCalendar.currentMeetingName() ?? ""   // a suggestion only — not committed
         let path = startSession(name: "")                        // file starts "未命名会议"
-        await MainActor.run { self.savedPath = path; self.meetingName = ""; self.calendarSuggestion = detected }
+        await MainActor.run {
+            self.savedPath = path; self.meetingName = ""; self.calendarSuggestion = detected
+            MeetingTimelineStore.shared.begin(sessionID: self.captureSessionID, title: "",
+                                              startedAt: self.captureStartedAt)
+        }
         if cloudReady { startCloudASR() } else { startLocalFallback() }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let display = content.displays.first else {
-                await MainActor.run { self.status = "找不到可采集的显示器"; self.isCapturing = false }; return
+                await MainActor.run {
+                    self.status = "找不到可采集的显示器"; self.isCapturing = false
+                    MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID, interrupted: true)
+                }; return
             }
             let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
             let cfg = SCStreamConfiguration()
@@ -259,7 +269,10 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         } catch {
             cloudASR?.cancel(); cloudASR = nil
             server.stop()
-            await MainActor.run { self.status = "需要屏幕录制权限：系统设置 › 隐私与安全性 › 屏幕录制，勾选 AfterMeet 后重开。"; self.isCapturing = false }
+            await MainActor.run {
+                self.status = "需要屏幕录制权限：系统设置 › 隐私与安全性 › 屏幕录制，勾选 AfterMeet 后重开。"; self.isCapturing = false
+                MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID, interrupted: true)
+            }
         }
     }
 
@@ -426,6 +439,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             self.status = "已结束"
             self.liveText = self.committed
             self.pendingLine = ""          // 收尾后没有"还在成形"的句子了
+            MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID)
             let mode = CaptureTranscriptionMode.resolve(
                 usedCloud: self.usedCloudInSession,
                 usedLocal: self.usedLocalInSession)
@@ -446,6 +460,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
         clockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, self.isCapturing, !self.isPaused else { return }
             self.elapsed += 1
+            MeetingTimelineStore.shared.tick(sessionID: self.captureSessionID, elapsedSec: self.elapsed)
         }
         // 原始录音完全独立于云端/本地 ASR 的消费与成功状态。即使识别引擎卡死，音频仍持续落盘。
         backupFlushTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -574,6 +589,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             endMS: normalizedEnd,
             timingQuality: timingQuality)
         capturedSegments.append(segment)
+        MeetingTimelineStore.shared.append(segment, sessionID: captureSessionID)
         nextCapturedSegmentOrdinal += 1
         if let url = segmentSidecarURL {
             let record = CapturedSegmentRecord(sessionID: captureSessionID, segment: segment)
@@ -814,6 +830,7 @@ final class CaptureService: NSObject, ObservableObject, SCStreamOutput, SCStream
             let e = self.elapsed
             self.status = "采集中断：\(error.localizedDescription)"
             self.isCapturing = false
+            MeetingTimelineStore.shared.finish(sessionID: self.captureSessionID, interrupted: true)
             self.stream = nil
             self.flushBackupAudio()
             if self.usingCloud, let cloud = self.cloudASR {

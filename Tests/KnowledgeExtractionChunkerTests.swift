@@ -60,7 +60,7 @@ final class KnowledgeExtractionChunkerTests: XCTestCase {
         XCTAssertTrue(prompt.contains("\"context_only\":false"))
         XCTAssertTrue(prompt.contains(context.id))
         XCTAssertTrue(prompt.contains(core.id))
-        XCTAssertTrue(KnowledgeExtractionPrompt.system.contains("至少有一条 support evidence 来自 context_only=false"))
+        XCTAssertTrue(KnowledgeExtractionPrompt.system.contains("每条候选至少一条 support 来自 context_only=false"))
     }
 
     func testEmptyInputAndInvalidLimitReturnNoChunks() {

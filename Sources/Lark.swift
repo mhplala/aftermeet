@@ -124,31 +124,6 @@ enum Lark {
         throw LarkError(message: errorMessage(json))
     }
 
-    // MARK: - 群搜索 + 发消息（转发到群）
-
-    struct Chat: Identifiable { let id: String; let name: String }
-
-    static func searchChats(query: String) async -> [Chat] {
-        guard let json = await runJSON(["im", "+chat-search", "--query", query, "--page-size", "8"]),
-              let items = (json["data"] as? [String: Any])?["items"] as? [[String: Any]] else { return [] }
-        return items.compactMap { it in
-            guard let id = it["chat_id"] as? String, let name = it["name"] as? String else { return nil }
-            return Chat(id: id, name: name)
-        }
-    }
-
-    static func sendMarkdown(chatID: String, markdown: String) async throws {
-        let args = ["im", "+messages-send", "--chat-id", chatID, "--markdown", markdown]
-        guard let json = await runJSON(args) else { throw LarkError(message: "lark-cli 无响应") }
-        guard let ok = json["ok"] as? Bool, ok else { throw LarkError(message: errorMessage(json)) }
-    }
-
-    /// im 发消息需要 im:message.send_as_user scope；缺了就把授权 URL 打开让用户点一下。
-    static func isMissingScope(_ error: Error) -> Bool {
-        (error as? LarkError)?.message.contains("missing_scope") == true
-        || (error as? LarkError)?.message.contains("im:message") == true
-    }
-
     // MARK: - 底座
 
     private static func errorMessage(_ json: [String: Any]) -> String {

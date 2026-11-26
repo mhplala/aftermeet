@@ -7,6 +7,12 @@ struct KnowledgeInboxView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            trustBoundary
+            let legacyCount = store.knowledgeInboxItems.filter { $0.unit.topicContext == nil && $0.unit.reviewStatus == .candidate }.count
+            if legacyCount > 0 {
+                Toggle("显示旧版片段（\(legacyCount) 条，尚未按话题重新提炼）", isOn: $store.showLegacyKnowledgeFragments)
+                    .font(Theme.ui(11.5)).foregroundColor(Theme.inkSecondary)
+            }
             stateFilters
             secondaryFilters
             if items.isEmpty {
@@ -24,6 +30,24 @@ struct KnowledgeInboxView: View {
                 }
             }
         }
+    }
+
+    private var trustBoundary: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "quote.bubble")
+                .font(.system(size: 12, weight: .semibold)).foregroundColor(Theme.inkSecondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("这里是候选，不是知识")
+                    .font(Theme.ui(12.5, .semibold)).foregroundColor(Theme.inkPrimary)
+                Text("按整场讨论沉淀关键事实、决策依据和适用范围；普通排期与进度不进入知识库。每项内容都要有原文支持，核对通过后仍需你确认。")
+                    .font(Theme.ui(11.5)).foregroundColor(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(13)
+        .background(Theme.warmWhite)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
     }
 
     private var stateFilters: some View {
@@ -106,16 +130,26 @@ struct KnowledgeInboxView: View {
     private func candidateCard(_ item: KnowledgeInboxItem) -> some View {
         let primaryEvidence = item.evidenceContexts.first(where: { $0.link.evidenceRole == .support })
             ?? item.evidenceContexts.first
+        let canConfirm = primaryEvidence != nil && item.unit.verificationStatus == .passed
         let projects = projectLabels(item)
         return VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 7) {
+                Text(verificationStatusLabel(item.unit))
+                    .font(Theme.mono(9.5, .semibold))
+                    .foregroundColor(item.unit.verificationStatus == .passed ? Theme.green700 : Theme.warn500)
                 Text(kindLabel(item.unit.kind))
                     .font(Theme.mono(9.5, .semibold))
                     .foregroundColor(Theme.inkSecondary)
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(Theme.warmWhite2)
                     .clipShape(Capsule())
-                Text(item.unit.evidenceLevel == .direct ? "直接证据" : "推断")
+                Text(claimTypeLabel(item.unit.claimType))
+                    .font(Theme.mono(9.5, .semibold)).foregroundColor(Theme.inkSecondary)
+                if item.unit.epistemicStatus != .certain {
+                    Text(epistemicLabel(item.unit.epistemicStatus))
+                        .font(Theme.mono(9.5, .semibold)).foregroundColor(Theme.warn500)
+                }
+                Text(item.unit.evidenceLevel == .direct ? "直接证据" : (item.unit.topicContext == nil ? "推断" : "多段归纳"))
                     .font(Theme.mono(9.5, .semibold))
                     .foregroundColor(item.unit.evidenceLevel == .direct ? Theme.green700 : Theme.warn500)
                 if item.unit.sensitivity == .restricted {
@@ -163,6 +197,14 @@ struct KnowledgeInboxView: View {
             }
 
             if let evidence = primaryEvidence {
+                if let context = item.unit.topicContext {
+                    KnowledgeTopicContextView(context: context, evidence: item.evidenceContexts)
+                    Text(evidenceMeta(evidence)).font(Theme.ui(10.5)).foregroundColor(Theme.inkTertiary)
+                } else {
+                    Text("旧版片段 · 需要按整场话题重新提炼").font(Theme.ui(11, .medium)).foregroundColor(Theme.warn500)
+                    KnowledgeMeetingContext(source: evidence.source)
+                }
+
                 VStack(alignment: .leading, spacing: 7) {
                     Text("“\(evidence.link.quote)”")
                         .font(Theme.ui(12.5)).foregroundColor(Theme.inkSecondary)
@@ -179,6 +221,25 @@ struct KnowledgeInboxView: View {
                     .font(Theme.ui(11.5, .medium)).foregroundColor(Theme.danger500)
             }
 
+            if item.unit.verificationStatus != .passed {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.unit.verificationStatus == .pending ? "等待语义验证" : "验证未通过")
+                        .font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.warn500)
+                    ForEach(item.unit.verificationReasons, id: \.self) { reason in
+                        Text("· " + blockerLabel(reason))
+                            .font(Theme.ui(11)).foregroundColor(Theme.inkSecondary)
+                    }
+                    if item.unit.verificationReasons.isEmpty {
+                        Text("这条候选需要重新核对后才能确认。")
+                            .font(Theme.ui(11)).foregroundColor(Theme.inkSecondary)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.warn50)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.rSM, style: .continuous))
+            }
+
             HStack(spacing: 8) {
                 if let evidence = primaryEvidence {
                     Button {
@@ -186,7 +247,7 @@ struct KnowledgeInboxView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "quote.bubble").font(.system(size: 10))
-                            Text("查看上下文")
+                            Text("查看会议与知识上下文")
                         }
                         .font(Theme.ui(11.5, .semibold)).foregroundColor(Theme.inkSecondary)
                         .padding(.horizontal, 11).padding(.vertical, 6)
@@ -243,13 +304,13 @@ struct KnowledgeInboxView: View {
                         Text("确认")
                             .font(Theme.ui(11.5, .semibold)).foregroundColor(.white)
                             .padding(.horizontal, 14).padding(.vertical, 6)
-                            .background(primaryEvidence == nil
-                                        ? AnyShapeStyle(Theme.inkMuted)
-                                        : AnyShapeStyle(Theme.inkGrad))
+                            .background(canConfirm
+                                        ? AnyShapeStyle(Theme.inkGrad)
+                                        : AnyShapeStyle(Theme.inkMuted))
                             .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .disabled(primaryEvidence == nil)
+                    .disabled(!canConfirm)
                 } else if item.unit.reviewStatus == .rejected {
                     Button {
                         store.restoreKnowledgeUnit(id: item.unit.id)
@@ -312,6 +373,62 @@ struct KnowledgeInboxView: View {
             return String(format: "%d:%02d:%02d", seconds / 3_600, (seconds / 60) % 60, seconds % 60)
         }
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func verificationStatusLabel(_ unit: KnowledgeUnit) -> String {
+        if unit.reviewStatus == .rejected { return "已忽略" }
+        if unit.isTrusted { return unit.reviewStatus == .edited ? "人工修订" : "已确认" }
+        switch unit.verificationStatus {
+        case .pending: return "待验证"
+        case .passed: return "可确认"
+        case .blocked: return "需修正"
+        }
+    }
+
+    private func claimTypeLabel(_ value: KnowledgeClaimType) -> String {
+        switch value {
+        case .observedFact: return "事实主张"
+        case .attributedOpinion: return "归属意见"
+        case .forecast: return "预测"
+        case .proposal: return "提议"
+        case .decision: return "决定"
+        case .commitment: return "承诺"
+        case .statusUpdate: return "状态更新"
+        case .openQuestion: return "问题"
+        }
+    }
+
+    private func epistemicLabel(_ value: KnowledgeEpistemicStatus) -> String {
+        switch value {
+        case .certain: return "确定"
+        case .soft: return "弱表态"
+        case .tentative: return "试探"
+        case .conditional: return "有条件"
+        }
+    }
+
+    private func blockerLabel(_ value: String) -> String {
+        switch value {
+        case KnowledgeQualificationIssue.missingTopicContext.rawValue: return "话题缺少背景、关键事实或决策依据"
+        case KnowledgeQualificationIssue.transientTopic.rawValue: return "普通排期与进度不应作为知识"
+        case KnowledgeQualificationIssue.invalidContextEvidence.rawValue: return "上下文内容缺少有效原文关联"
+
+        case KnowledgeQualificationIssue.inferredClaim.rawValue: return "主张仍依赖推断"
+        case KnowledgeQualificationIssue.incompatibleClaimType.rawValue: return "主张性质与知识类型冲突"
+        case KnowledgeQualificationIssue.missingOwner.rawValue: return "承诺缺少明确负责人"
+        case KnowledgeQualificationIssue.missingAttribution.rawValue: return "意见、预测或承诺缺少明确归属人"
+        case KnowledgeQualificationIssue.unresolvedReference.rawValue: return "存在未解析的指代"
+        case KnowledgeQualificationIssue.vaguePredicate.rawValue: return "关系字段过于模糊"
+        case KnowledgeQualificationIssue.multiplePropositions.rawValue: return "一条候选混合了多个命题"
+        case KnowledgeQualificationIssue.speechActMismatch.rawValue: return "疑问、提议、承诺或状态被错误归类"
+        case KnowledgeQualificationIssue.modalityStrengthened.rawValue: return "候选强化了原文的不确定语气"
+        case KnowledgeQualificationIssue.semanticUncertain.rawValue: return "原文不足以确定这条主张"
+        case KnowledgeQualificationIssue.semanticUnsupported.rawValue: return "原文不支持这条主张或其中字段"
+        case KnowledgeQualificationIssue.requiresVerifierUpgrade.rawValue: return "这条候选尚未完成完整核对"
+        case "missing_support": return "缺少可用的原文支持"
+        case KnowledgeQualificationIssue.supersededExtraction.rawValue: return "已被更新后的候选替代"
+        default: return "需要人工核对"
+        }
     }
 
     private func kindLabel(_ kind: KnowledgeKind) -> String {

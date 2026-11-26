@@ -1,8 +1,38 @@
 import XCTest
 @testable import AfterMeet
 
+private struct SemanticVerifierFixtureClient: KnowledgeExtractionClient {
+    let verdict: String
+    let includeReasons: Bool
+
+    func complete(systemPrompt: String, userPrompt: String, maxTokens: Int) async throws -> String {
+        var item: [String: Any] = ["client_id": "candidate-1", "verdict": verdict]
+        if includeReasons { item["reasons"] = [] }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "schema_version": 1,
+            "units": [item]
+        ])
+        return String(data: data, encoding: .utf8)!
+    }
+}
+
+private struct DuplicateSemanticVerifierClient: KnowledgeExtractionClient {
+    func complete(systemPrompt: String, userPrompt: String, maxTokens: Int) async throws -> String {
+        """
+        {"schema_version":1,"units":[
+          {"client_id":"candidate-1","verdict":"entailed","reasons":[]},
+          {"client_id":"candidate-1","verdict":"entailed","reasons":[]}
+        ]}
+        """
+    }
+}
+
 final class KnowledgeCandidateNormalizerTests: XCTestCase {
     private func candidate(
+        kind: KnowledgeKind = .metric,
+        claimType: KnowledgeClaimType = .observedFact,
+        epistemicStatus: KnowledgeEpistemicStatus = .certain,
+        attributedTo: String? = nil,
         evidenceLevel: KnowledgeEvidenceLevel = .direct,
         subject: String? = nil,
         predicate: String? = nil,
@@ -20,7 +50,8 @@ final class KnowledgeCandidateNormalizerTests: XCTestCase {
         let evidence = KnowledgeExtractionEvidence(
             segmentID: "segment-1", quote: quote, role: .support)
         let candidate = KnowledgeExtractionCandidate(
-            clientID: "candidate-1", kind: .metric,
+            clientID: "candidate-1", kind: kind, claimType: claimType,
+            epistemicStatus: epistemicStatus, attributedTo: attributedTo,
             canonicalText: "虚构指标更新", subject: subject, predicate: predicate,
             objectText: objectText, numericValue: numericValue, valueUnit: valueUnit,
             owner: owner, dueText: dueText, validFrom: validFrom, validTo: validTo,
@@ -102,6 +133,18 @@ final class KnowledgeCandidateNormalizerTests: XCTestCase {
         }
     }
 
+    func testImpossibleDateIsRejectedInsteadOfCalendarNormalized() {
+        let value = candidate(
+            validFrom: "2026-02-31",
+            quote: "截止日期是 2026-02-31")
+
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+
+        XCTAssertNil(normalized.validFrom)
+    }
+
     func testQuarterParsesToStartAndEndWithoutCollapsingHistory() {
         let value = candidate(
             validFrom: "2026 Q3", validTo: "2026 Q3",
@@ -145,5 +188,167 @@ final class KnowledgeCandidateNormalizerTests: XCTestCase {
         XCTAssertEqual(KnowledgeCandidateNormalizer.normalize(
             restrictedCandidate, sourceSensitivity: .normal,
             observedAt: observedAt(), calendar: utcCalendar()).sensitivity, .restricted)
+    }
+
+    func testQualificationKeepsProposalDistinctFromCommitmentWithinActionGroup() {
+        let value = candidate(
+            kind: .action,
+            claimType: .proposal,
+            quote: "要不要找音乐试试看")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+
+        XCTAssertFalse(KnowledgeQualificationValidator.issues(for: normalized)
+            .contains(.incompatibleClaimType))
+        XCTAssertEqual(normalized.claimType, .proposal)
+        XCTAssertNil(normalized.owner)
+    }
+
+    func testQualificationRequiresOwnerAndAttributionForCommitment() {
+        let value = candidate(
+            kind: .action,
+            claimType: .commitment,
+            quote: "后面把方案再过一遍")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+
+        let issues = KnowledgeQualificationValidator.issues(for: normalized)
+        XCTAssertTrue(issues.contains(.missingOwner))
+        XCTAssertTrue(issues.contains(.missingAttribution))
+    }
+
+    func testAttributedOpinionPreservesSpeakerAndSoftModality() {
+        let value = candidate(
+            kind: .fact,
+            claimType: .attributedOpinion,
+            epistemicStatus: .soft,
+            attributedTo: "小王",
+            quote: "小王觉得这个方向可能更稳")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+
+        XCTAssertEqual(normalized.attributedTo, "小王")
+        XCTAssertEqual(normalized.epistemicStatus, .soft)
+        XCTAssertFalse(KnowledgeQualificationValidator.issues(for: normalized)
+            .contains(.missingAttribution))
+    }
+
+    func testQualificationBlocksQuestionPromotedToFact() {
+        let value = candidate(
+            kind: .fact,
+            claimType: .observedFact,
+            quote: "欧洲调查现在进展怎么样？")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+
+        XCTAssertTrue(KnowledgeQualificationValidator.issues(for: normalized)
+            .contains(.speechActMismatch))
+    }
+
+    func testQualificationBlocksHedgePromotedToCertainFact() {
+        let value = candidate(
+            kind: .fact,
+            claimType: .observedFact,
+            epistemicStatus: .certain,
+            quote: "我觉得可能会有一些动荡")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+
+        XCTAssertTrue(KnowledgeQualificationValidator.issues(for: normalized)
+            .contains(.modalityStrengthened))
+    }
+
+    func testQualificationBlocksFirstPersonCommitmentTypedAsProposal() {
+        let value = candidate(
+            kind: .action,
+            claimType: .proposal,
+            quote: "我会跟 leadership 聊这个问题")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+
+        XCTAssertTrue(KnowledgeQualificationValidator.issues(for: normalized)
+            .contains(.speechActMismatch))
+    }
+
+    func testSpeakerBackedFirstPersonAttributionAndOwnerSurviveNormalization() {
+        let value = candidate(
+            kind: .action,
+            claimType: .commitment,
+            epistemicStatus: .certain,
+            attributedTo: "Alice",
+            owner: "Alice",
+            quote: "我来跟进这个问题")
+        let segment = KnowledgeSourceSegment(
+            id: "segment-1", sourceID: "source-1", meetingID: "meeting-1", ordinal: 0,
+            speaker: "Alice", startMS: 0, endMS: 1_000, charStart: 0, charEnd: 10,
+            text: "我来跟进这个问题", contentHash: "hash", metadataJSON: "{}",
+            createdAt: 1, updatedAt: 1)
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal, observedAt: observedAt(),
+            segmentsByID: [segment.id: segment], calendar: utcCalendar())
+
+        XCTAssertEqual(normalized.attributedTo, "Alice")
+        XCTAssertEqual(normalized.owner, "Alice")
+        XCTAssertFalse(KnowledgeQualificationValidator.issues(for: normalized)
+            .contains(.missingAttribution))
+        XCTAssertFalse(KnowledgeQualificationValidator.issues(for: normalized)
+            .contains(.missingOwner))
+    }
+
+    func testDuplicateSemanticIDsReturnErrorInsteadOfCrashing() async throws {
+        let value = candidate(quote: "虚构指标更新")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+        let verifier = ModelKnowledgeCandidateVerifier(client: DuplicateSemanticVerifierClient())
+
+        do {
+            _ = try await verifier.verify(
+                validated: [value], normalized: [normalized], segmentsByID: [:])
+            XCTFail("expected duplicate ID rejection")
+        } catch let error as KnowledgeExtractionError {
+            XCTAssertEqual(error.localizedDescription, "知识语义验证包含重复候选 ID")
+        }
+    }
+
+    func testSemanticVerifierAcceptsMissingOptionalReasons() async throws {
+        let value = candidate(quote: "虚构指标更新")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+        let verifier = ModelKnowledgeCandidateVerifier(client: SemanticVerifierFixtureClient(
+            verdict: "entailed", includeReasons: false))
+
+        let result = try await verifier.verify(
+            validated: [value], normalized: [normalized], segmentsByID: [:])
+
+        XCTAssertEqual(result["candidate-1"]?.verdict, .entailed)
+        XCTAssertEqual(result["candidate-1"]?.reasons, [])
+        XCTAssertEqual(KnowledgeVerificationAssessment.make(
+            candidate: normalized,
+            semantic: result["candidate-1"]).status, .passed)
+    }
+
+    func testSemanticUnsupportedCannotPassQualification() async throws {
+        let value = candidate(quote: "虚构指标更新")
+        let normalized = KnowledgeCandidateNormalizer.normalize(
+            value, sourceSensitivity: .normal,
+            observedAt: observedAt(), calendar: utcCalendar())
+        let verifier = ModelKnowledgeCandidateVerifier(client: SemanticVerifierFixtureClient(
+            verdict: "unsupported", includeReasons: false))
+        let result = try await verifier.verify(
+            validated: [value], normalized: [normalized], segmentsByID: [:])
+        let assessment = KnowledgeVerificationAssessment.make(
+            candidate: normalized,
+            semantic: result["candidate-1"])
+
+        XCTAssertEqual(assessment.status, .blocked)
+        XCTAssertTrue(assessment.reasonsJSON.contains("semantic_unsupported"))
     }
 }

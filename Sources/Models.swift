@@ -3,9 +3,10 @@ import Combine
 
 // MARK: - Enums
 
-enum Screen { case home, library, knowledge, calendar, detail, todos, followup, weekly, daily, settings }
+enum Screen { case home, library, knowledge, calendar, detail, timeline, todos, followup, weekly, daily, settings }
 enum KnowledgeTab: String, CaseIterable, Identifiable {
     case inbox
+    case library
     case projects
     case ask
     var id: String { rawValue }
@@ -165,6 +166,7 @@ final class AppStore: ObservableObject {
     private let knowledgeWorker: KnowledgeExtractionWorker
 
     @Published var screen: Screen = .home
+    @Published var timelineSessionID: String?
     @Published var showOnboarding = false
     @Published var obStep = 0
 
@@ -192,6 +194,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var knowledgeProjects: [KnowledgeProject] = []
     @Published private(set) var knowledgeJobs: [KnowledgeExtractionJob] = []
     @Published private(set) var knowledgeUnavailableReason: String?
+    @Published var showLegacyKnowledgeFragments = false
     @Published var knowledgeInboxFilter: KnowledgeInboxFilter = .pending
     @Published var knowledgeKindFilter: KnowledgeKind?
     @Published var knowledgeSourceFilter: KnowledgeSourceKind?
@@ -328,6 +331,7 @@ final class AppStore: ObservableObject {
     /// Hosted XCTest processes are forced into the same isolated path so tests never sync or mutate user data.
     static let demoMode = UserDefaults.standard.bool(forKey: "demo")
         || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || ProcessInfo.processInfo.processName == "xctest"
 
     private static func realMeetingVMs(_ meetings: [RealMeeting],
                                        knowledgeStore: KnowledgeStore = .shared) -> [MeetingVM] {
@@ -419,6 +423,12 @@ final class AppStore: ObservableObject {
         refreshDerived()
         refreshKnowledgeState()
         recoverPendingRefinements()
+        if knowledgeEnabled && knowledgeJobs.contains(where: {
+            $0.state == .pending || $0.state == .retry || $0.state == .running
+        }) {
+            knowledgeBackfillPaused = false
+            Task { await runKnowledgeQueue() }
+        }
     }
 
     /// 自动同步拉到新会 → 并进列表并提示（本地捕获的仍排最上面）。
@@ -461,6 +471,10 @@ final class AppStore: ObservableObject {
             note: pendingNote))
         if !persisted { showToast("录音写入数据库失败，已导出救援文件到数据目录") }
 
+        if persisted {
+            MeetingTimelineStore.shared.bind(sessionID: result.sessionID, meetingID: storedID, title: initialTitle)
+        }
+
         liveDurations[storedID] = result.durationSec
         let pendingVM = MeetingVM(
             live: pendingNote,
@@ -494,11 +508,19 @@ final class AppStore: ObservableObject {
                 showToast("录音已保存，知识来源索引将在稍后补齐")
             } else {
                 if knowledgeEnabled {
-                    _ = KnowledgeJobPlanner.planExtraction(
+                    let result = KnowledgeJobPlanner.planExtraction(
                         for: bundle.document,
                         store: knowledgeStore,
                         enabled: true)
                     refreshKnowledgeState()
+                    switch result {
+                    case .enqueued(let job), .existing(let job):
+                        if job.state == .pending || job.state == .retry {
+                            knowledgeBackfillPaused = false
+                            Task { await runKnowledgeQueue() }
+                        }
+                    default: break
+                    }
                 }
                 if !quiet { showToast("录音与逐字稿已保存，正在生成纪要…") }
             }
@@ -521,6 +543,7 @@ final class AppStore: ObservableObject {
             }
             let title = userTitle.isEmpty && refineError == nil ? note.title : initialTitle
             LiveStore.replaceNote(id: storedID, note: note, title: title)
+            MeetingTimelineStore.shared.rename(sessionID: result.sessionID, title: title)
             if let index = meetings.firstIndex(where: { $0.id == storedID }) {
                 meetings[index] = MeetingVM(
                     live: note,
@@ -912,6 +935,14 @@ final class AppStore: ObservableObject {
         withAnimation(.easeOut(duration: 0.18)) { screen = prev }
     }
 
+    func openTimeline(sessionID: String) {
+        guard MeetingTimelineStore.shared.activeSessionID == sessionID,
+              MeetingTimelineStore.shared.documents[sessionID]?.state == .recording else { return }
+        timelineSessionID = sessionID
+        showRecPanel = false
+        go(.timeline)
+    }
+
     // 详情页 ‹ › ：时间序上一场/下一场，到头禁用（不循环）
     var canPrevMeeting: Bool { selectedMeeting > 0 }
     var canNextMeeting: Bool { selectedMeeting < meetings.count - 1 }
@@ -985,7 +1016,15 @@ final class AppStore: ObservableObject {
     func setKnowledgeEnabled(_ enabled: Bool) {
         knowledgeEnabled = enabled
         KnowledgeFeatureFlags.setEnabled(enabled)
-        if enabled { refreshKnowledgeState() }
+        if enabled {
+            refreshKnowledgeState()
+            if knowledgeJobs.contains(where: { $0.state == .pending || $0.state == .retry }) {
+                knowledgeBackfillPaused = false
+                Task { await runKnowledgeQueue() }
+            }
+        } else {
+            knowledgeBackfillPaused = true
+        }
     }
 
     func refreshKnowledgeState() {
@@ -1114,16 +1153,21 @@ final class AppStore: ObservableObject {
     }
 
     func confirmKnowledgeUnit(id: String) {
-        guard knowledgeStore.confirmUnit(id: id) else {
-            showToast("确认失败：候选缺少有效证据或状态已变化")
+        let meetingID = knowledgeInboxItems.first(where: { $0.id == id })?.sources.first?.meetingID
+        let title = meetingID.flatMap { sourceID in
+            meetings.first(where: { $0.id == sourceID })?.title
+        } ?? meetingID ?? "会议知识"
+        guard knowledgeStore.confirmUnit(id: id, meetingTitle: title) else {
+            showToast("确认失败：候选尚未通过语义与证据验证")
             return
         }
         refreshKnowledgeState()
         showToast("已加入知识库")
     }
 
-    func knowledgeEvidenceWindow(for evidence: KnowledgeInboxEvidence) -> [KnowledgeSourceSegment] {
+    func knowledgeEvidenceWindow(for evidence: KnowledgeInboxEvidence, fullMeeting: Bool = false) -> [KnowledgeSourceSegment] {
         let segments = knowledgeStore.segments(sourceID: evidence.source.id)
+        if fullMeeting { return segments }
         guard let index = segments.firstIndex(where: { $0.id == evidence.segment.id }) else {
             return [evidence.segment]
         }
@@ -1267,6 +1311,13 @@ final class AppStore: ObservableObject {
             report: ArchiveMatchReport(records: records))
     }
 
+    var knowledgePilotNeedsUpgrade: Bool {
+        knowledgeJobs.contains {
+            knowledgePilotJobIDs.contains($0.id)
+                && $0.extractorVersion != KnowledgeExtractionPrompt.extractorVersion
+        }
+    }
+
     var knowledgeBackfillProgress: KnowledgeBackfillProgress {
         let pilotJobs = knowledgeJobs.filter { knowledgePilotJobIDs.contains($0.id) }
         return KnowledgeBackfillProgress(
@@ -1288,18 +1339,17 @@ final class AppStore: ObservableObject {
     func prepareKnowledgePilot(from storedMeetings: [StoredLiveMeeting], limit: Int = 10) -> Int {
         guard knowledgeEnabled, knowledgeStore.isAvailable, limit > 0 else { return 0 }
         var prepared = 0
+        var selectedJobIDs = Set<String>()
         var sourceByMeeting = Dictionary(
             grouping: knowledgeStore.sources(), by: \.meetingID)
             .compactMapValues { $0.sorted { $0.updatedAt > $1.updatedAt }.first }
-        let jobsBySource = Dictionary(grouping: knowledgeStore.jobs(), by: \.sourceID)
         for meeting in storedMeetings.sorted(by: { $0.timestamp > $1.timestamp }) {
-            guard prepared < limit,
+            guard selectedJobIDs.count < limit,
                   meeting.transcript.trimmingCharacters(in: .whitespacesAndNewlines).count >= 300,
                   KnowledgeSensitivityClassifier.classify(
                     title: meeting.title, content: meeting.transcript) == .normal else { continue }
             let source: KnowledgeSourceDocument
             if let existing = sourceByMeeting[meeting.id] {
-                if jobsBySource[existing.id]?.isEmpty == false { continue }
                 source = existing
             } else {
                 let bundle = KnowledgeSegmenter.plainTextSourceBundle(
@@ -1321,15 +1371,69 @@ final class AppStore: ObservableObject {
                 enabled: true,
                 now: Date().timeIntervalSince1970)
             switch result {
-            case .enqueued(let job), .existing(let job):
-                knowledgePilotJobIDs.insert(job.id)
-                prepared += 1
+            case .enqueued(let job):
+                if selectedJobIDs.insert(job.id).inserted { prepared += 1 }
+            case .existing(let job):
+                selectedJobIDs.insert(job.id)
+            default: break
+            }
+        }
+        if !selectedJobIDs.isEmpty { knowledgePilotJobIDs = selectedJobIDs }
+        _ = knowledgeStore.savePilotJobIDs(knowledgePilotJobIDs)
+        refreshKnowledgeState()
+        return prepared
+    }
+
+    func restartKnowledgePilotWithCurrentExtractor() {
+        guard !knowledgeBackfillRunning else { return }
+        let priorSourceIDs = Set(knowledgeJobs.filter {
+            knowledgePilotJobIDs.contains($0.id)
+        }.map(\.sourceID))
+        let sources = knowledgeStore.sources().filter { priorSourceIDs.contains($0.id) }.prefix(10)
+        knowledgePilotJobIDs = []
+        for source in sources {
+            let result = KnowledgeJobPlanner.planExtraction(
+                for: source,
+                store: knowledgeStore,
+                enabled: true)
+            switch result {
+            case .enqueued(let job), .existing(let job): knowledgePilotJobIDs.insert(job.id)
             default: break
             }
         }
         _ = knowledgeStore.savePilotJobIDs(knowledgePilotJobIDs)
         refreshKnowledgeState()
-        return prepared
+        guard !knowledgePilotJobIDs.isEmpty else {
+            showToast("没有可用新版重新验证的会议")
+            return
+        }
+        knowledgeBackfillPaused = false
+        Task { await runKnowledgeQueue() }
+    }
+
+    func reextractKnowledgeMeeting(meetingID: String) {
+        guard knowledgeEnabled, !knowledgeBackfillRunning else { return }
+        guard let source = knowledgeStore.sources(meetingID: meetingID)
+            .filter({ $0.sensitivity == .normal }).max(by: { $0.updatedAt < $1.updatedAt }) else {
+            showToast("这场会议暂无可提炼的普通来源")
+            return
+        }
+        let result = KnowledgeJobPlanner.planExtraction(for: source, store: knowledgeStore, enabled: true)
+        let job: KnowledgeExtractionJob
+        switch result {
+        case .enqueued(let value), .existing(let value): job = value
+        default: showToast("暂时无法开始话题提炼"); return
+        }
+        if job.state == .done { showToast("本场已完成话题提炼，可到知识页查看"); return }
+        knowledgePilotJobIDs = [job.id]
+        _ = knowledgeStore.savePilotJobIDs(knowledgePilotJobIDs)
+        refreshKnowledgeState()
+        knowledgeBackfillPaused = false
+        Task {
+            if job.state == .failed { _ = await knowledgeWorker.retry(jobID: job.id) }
+            await runKnowledgeQueue(allowedJobIDs: [job.id])
+        }
+        showToast("正在结合整场讨论提炼知识")
     }
 
     func startKnowledgePilot() {
@@ -1366,7 +1470,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func runKnowledgeQueue(client: any KnowledgeExtractionClient = RefineKnowledgeExtractionClient()) async {
+    func runKnowledgeQueue(client: any KnowledgeExtractionClient = RefineKnowledgeExtractionClient(), allowedJobIDs: Set<String>? = nil) async {
         guard !knowledgeBackfillRunning, !knowledgeBackfillPaused, knowledgeEnabled else { return }
         knowledgeBackfillRunning = true
         defer {
@@ -1382,18 +1486,34 @@ final class AppStore: ObservableObject {
             meetingMetadata: { meetingID in
                 metadata[meetingID] ?? KnowledgeMeetingMetadata(title: meetingID, dateLabel: nil)
             })
-        while !knowledgeBackfillPaused {
-            let processed = await knowledgeWorker.runNext(allowedJobIDs: knowledgePilotJobIDs) { job in
+        while !knowledgeBackfillPaused && knowledgeEnabled {
+            let currentIDs = allowedJobIDs ?? Set(knowledgeJobs.filter {
+                $0.extractorVersion == KnowledgeExtractionPrompt.extractorVersion
+            }.map(\.id))
+            let processed = await knowledgeWorker.runNext(allowedJobIDs: currentIDs) { job in
                 try await pipeline.execute(job)
             }
             refreshKnowledgeState()
-            if !processed { break }
+            if !processed {
+                let now = Date().timeIntervalSince1970
+                guard !knowledgeBackfillPaused,
+                      let wakeAt = knowledgeJobs.compactMap({ job -> TimeInterval? in
+                          guard currentIDs.contains(job.id) else { return nil }
+                          switch job.state {
+                          case .retry: return job.nextRetryAt ?? now
+                          case .running: return job.leaseUntil ?? now
+                          default: return nil
+                          }
+                      }).min() else { break }
+                let delay = min(5, max(0.1, wakeAt - now))
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
         }
     }
 
     var visibleKnowledgeInboxItems: [KnowledgeInboxItem] {
         Self.filterKnowledgeInbox(
-            knowledgeInboxItems,
+            knowledgeInboxItems.filter { showLegacyKnowledgeFragments || $0.unit.topicContext != nil || $0.unit.reviewStatus != .candidate },
             state: knowledgeInboxFilter,
             kind: knowledgeKindFilter,
             source: knowledgeSourceFilter,
@@ -1403,7 +1523,7 @@ final class AppStore: ObservableObject {
 
     func knowledgeInboxCount(_ filter: KnowledgeInboxFilter) -> Int {
         Self.filterKnowledgeInbox(
-            knowledgeInboxItems,
+            knowledgeInboxItems.filter { showLegacyKnowledgeFragments || $0.unit.topicContext != nil || $0.unit.reviewStatus != .candidate },
             state: filter,
             kind: knowledgeKindFilter,
             source: knowledgeSourceFilter,
@@ -1464,7 +1584,10 @@ final class AppStore: ObservableObject {
     var knowledgeAttentionCount: Int {
         guard knowledgeEnabled else { return 0 }
         return knowledgeUnits.filter { $0.reviewStatus == .candidate }.count
-            + knowledgeJobs.filter { $0.state == .failed }.count
+            + knowledgeJobs.filter {
+                $0.state == .failed
+                    && $0.extractorVersion == KnowledgeExtractionPrompt.extractorVersion
+            }.count
     }
 
     var knowledgeBadge: String? {
@@ -1683,6 +1806,11 @@ final class AppStore: ObservableObject {
         Task {
             let before = meetings.count
             await sync.sync()
+            refreshKnowledgeState()
+            if knowledgeEnabled {
+                knowledgeBackfillPaused = false
+                await runKnowledgeQueue()
+            }
             if meetings.count == before { showToast("没有发现新会议") }
         }
     }

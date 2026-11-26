@@ -6,6 +6,11 @@ struct KnowledgeUnitEditorView: View {
     let item: KnowledgeInboxItem
 
     @State private var canonicalText: String
+    @State private var kind: KnowledgeKind
+    @State private var evidenceLevel: KnowledgeEvidenceLevel
+    @State private var claimType: KnowledgeClaimType
+    @State private var epistemicStatus: KnowledgeEpistemicStatus
+    @State private var attributedTo: String
     @State private var subject: String
     @State private var predicate: String
     @State private var objectText: String
@@ -17,6 +22,11 @@ struct KnowledgeUnitEditorView: View {
     init(item: KnowledgeInboxItem) {
         self.item = item
         _canonicalText = State(initialValue: item.unit.canonicalText)
+        _kind = State(initialValue: item.unit.kind)
+        _evidenceLevel = State(initialValue: item.unit.evidenceLevel)
+        _claimType = State(initialValue: item.unit.claimType)
+        _epistemicStatus = State(initialValue: item.unit.epistemicStatus)
+        _attributedTo = State(initialValue: item.unit.attributedTo ?? "")
         _subject = State(initialValue: item.unit.subject ?? "")
         _predicate = State(initialValue: item.unit.predicate ?? "")
         _objectText = State(initialValue: item.unit.objectText ?? "")
@@ -56,6 +66,53 @@ struct KnowledgeUnitEditorView: View {
                         .background(Theme.warmWhite)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
                         .hairline(Theme.borderDefault, radius: Theme.rMD)
+
+                    fieldLabel("主张性质")
+                    VStack(spacing: 0) {
+                        HStack(spacing: 10) {
+                            Text("分组").font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
+                                .frame(width: 72, alignment: .leading)
+                            Picker("知识分组", selection: $kind) {
+                                ForEach(KnowledgeKind.allCases, id: \.rawValue) { value in
+                                    Text(kindLabel(value)).tag(value)
+                                }
+                            }
+                            .labelsHidden().pickerStyle(.menu)
+                            Spacer()
+                            Text("证据").font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
+                            Picker("证据级别", selection: $evidenceLevel) {
+                                Text("直接证据").tag(KnowledgeEvidenceLevel.direct)
+                                Text("仍需推断").tag(KnowledgeEvidenceLevel.inferred)
+                            }
+                            .labelsHidden().pickerStyle(.menu)
+                        }
+                        .padding(.horizontal, 13).padding(.vertical, 9)
+                        Hairline()
+                        HStack(spacing: 10) {
+                            Text("类型").font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
+                                .frame(width: 72, alignment: .leading)
+                            Picker("主张类型", selection: $claimType) {
+                                ForEach(KnowledgeClaimType.allCases, id: \.rawValue) { value in
+                                    Text(claimTypeLabel(value)).tag(value)
+                                }
+                            }
+                            .labelsHidden().pickerStyle(.menu)
+                            Spacer()
+                            Text("语气").font(Theme.ui(12)).foregroundColor(Theme.inkSecondary)
+                            Picker("语气", selection: $epistemicStatus) {
+                                ForEach(KnowledgeEpistemicStatus.allCases, id: \.rawValue) { value in
+                                    Text(epistemicLabel(value)).tag(value)
+                                }
+                            }
+                            .labelsHidden().pickerStyle(.menu)
+                        }
+                        .padding(.horizontal, 13).padding(.vertical, 9)
+                        Hairline()
+                        fieldRow("归属人", text: $attributedTo, placeholder: "意见、预测和承诺必须填写")
+                    }
+                    .background(Theme.white)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMD, style: .continuous))
+                    .hairline(Theme.borderWhisper, radius: Theme.rMD)
 
                     fieldLabel("结构化字段")
                     VStack(spacing: 0) {
@@ -110,7 +167,7 @@ struct KnowledgeUnitEditorView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("编辑知识")
                     .font(Theme.display(15, .semibold)).foregroundColor(Theme.inkPrimary)
-                Text("保存后成为已编辑版本，原始证据不会改变")
+                Text("修正并确认后成为可信知识；原始证据不会改变")
                     .font(Theme.mono(9.5)).foregroundColor(Theme.inkTertiary)
             }
             Spacer()
@@ -143,10 +200,15 @@ struct KnowledgeUnitEditorView: View {
                     owner: nilIfEmpty(owner),
                     dueText: nilIfEmpty(dueText),
                     validFrom: item.unit.validFrom,
-                    validTo: item.unit.validTo)
+                    validTo: item.unit.validTo,
+                    claimType: claimType,
+                    epistemicStatus: epistemicStatus,
+                    attributedTo: nilIfEmpty(attributedTo),
+                    kind: kind,
+                    evidenceLevel: evidenceLevel)
                 if store.editKnowledgeUnit(id: item.id, edits: edits) { dismiss() }
             } label: {
-                Text("保存并确认")
+                Text("修正并确认")
                     .font(Theme.ui(11.5, .semibold)).foregroundColor(.white)
                     .padding(.horizontal, 14).padding(.vertical, 7)
                     .background(canSave ? AnyShapeStyle(Theme.inkGrad) : AnyShapeStyle(Theme.inkMuted))
@@ -157,6 +219,40 @@ struct KnowledgeUnitEditorView: View {
         }
         .padding(.horizontal, 18).padding(.vertical, 13)
         .background(Theme.white)
+    }
+
+    private func kindLabel(_ value: KnowledgeKind) -> String {
+        switch value {
+        case .fact: return "事实"
+        case .decision: return "决策"
+        case .action: return "行动"
+        case .openQuestion: return "未决"
+        case .metric: return "指标"
+        case .risk: return "风险"
+        case .dispute: return "分歧"
+        }
+    }
+
+    private func claimTypeLabel(_ value: KnowledgeClaimType) -> String {
+        switch value {
+        case .observedFact: return "已观察事实"
+        case .attributedOpinion: return "归属意见"
+        case .forecast: return "预测"
+        case .proposal: return "提议"
+        case .decision: return "决定"
+        case .commitment: return "承诺"
+        case .statusUpdate: return "状态更新"
+        case .openQuestion: return "待回答问题"
+        }
+    }
+
+    private func epistemicLabel(_ value: KnowledgeEpistemicStatus) -> String {
+        switch value {
+        case .certain: return "确定"
+        case .soft: return "弱表态"
+        case .tentative: return "试探"
+        case .conditional: return "有条件"
+        }
     }
 
     private func fieldLabel(_ text: String) -> some View {

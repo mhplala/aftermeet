@@ -184,7 +184,10 @@ final class KnowledgeStore {
             return trimmed.isEmpty ? nil : trimmed
         }
         let normalized = NormalizedKnowledgeCandidate(
-            kind: current.kind,
+            kind: edits.kind ?? current.kind,
+            claimType: edits.claimType ?? current.claimType,
+            epistemicStatus: edits.epistemicStatus ?? current.epistemicStatus,
+            attributedTo: cleaned(edits.attributedTo),
             canonicalText: canonical,
             subject: cleaned(edits.subject),
             predicate: cleaned(edits.predicate),
@@ -195,14 +198,18 @@ final class KnowledgeStore {
             dueText: cleaned(edits.dueText),
             validFrom: edits.validFrom,
             validTo: edits.validTo,
-            evidenceLevel: current.evidenceLevel,
-            evidence: [],
+            evidenceLevel: edits.evidenceLevel ?? current.evidenceLevel,
+            evidence: evidence(unitID: id).map { KnowledgeExtractionEvidence(segmentID: $0.segmentID, quote: $0.quote, role: $0.evidenceRole) },
             projectHints: [],
             sensitivity: current.sensitivity,
             payloadJSON: current.payloadJSON)
+        guard KnowledgeQualificationValidator.issues(for: normalized).isEmpty else { return false }
         let updated = KnowledgeUnit(
             id: current.id,
-            kind: current.kind,
+            kind: normalized.kind,
+            claimType: normalized.claimType,
+            epistemicStatus: normalized.epistemicStatus,
+            attributedTo: normalized.attributedTo,
             canonicalText: normalized.canonicalText,
             subject: normalized.subject,
             predicate: normalized.predicate,
@@ -214,8 +221,13 @@ final class KnowledgeStore {
             validFrom: normalized.validFrom,
             validTo: normalized.validTo,
             observedAt: current.observedAt,
+            observationBasis: current.observationBasis,
             reviewStatus: .edited,
-            evidenceLevel: current.evidenceLevel,
+            evidenceLevel: normalized.evidenceLevel,
+            verificationStatus: .passed,
+            verificationReasonsJSON: "[]",
+            verifierVersion: "human-review+\(KnowledgeQualificationValidator.version)",
+            verifiedAt: timestamp,
             conflictStatus: current.conflictStatus,
             sensitivity: current.sensitivity,
             fingerprint: KnowledgeFingerprint.make(for: normalized),
@@ -250,10 +262,19 @@ final class KnowledgeStore {
 
     @discardableResult
     func confirmUnit(id: String,
+                     meetingTitle: String = "会议知识",
                      at timestamp: TimeInterval = Date().timeIntervalSince1970) -> Bool {
-        guard let unit = units().first(where: { $0.id == id }) else { return false }
-        if unit.reviewStatus == .confirmed || unit.reviewStatus == .edited { return true }
-        guard unit.reviewStatus == .candidate else { return false }
+        guard let item = inboxItems().first(where: { $0.id == id }),
+              let source = item.sources.first else { return false }
+        let unit = item.unit
+        if unit.isTrusted { return true }
+        guard unit.reviewStatus == .candidate,
+              unit.verificationStatus == .passed,
+              item.evidenceContexts.contains(where: { evidence in
+                  evidence.link.evidenceRole == .support
+                      && KnowledgeIdentity.normalizedForHash(evidence.segment.text)
+                          .contains(KnowledgeIdentity.normalizedForHash(evidence.link.quote))
+              }) else { return false }
         let feedback = KnowledgeFeedbackEvent(
             id: UUID().uuidString.lowercased(),
             targetType: "knowledge_unit",
@@ -264,7 +285,12 @@ final class KnowledgeStore {
             reason: nil,
             actor: "user",
             createdAt: timestamp)
-        return database.confirmKnowledgeUnit(id: id, feedback: feedback, now: timestamp)
+        return database.confirmKnowledgeUnit(
+            id: id,
+            feedback: feedback,
+            meetingID: source.meetingID,
+            meetingTitle: meetingTitle,
+            now: timestamp)
     }
 
     @discardableResult
@@ -290,12 +316,33 @@ final class KnowledgeStore {
             meetingID: meetingID, meetingTitle: meetingTitle)
     }
 
+    @discardableResult
+    func archiveSupersededCandidates(sourceID: String,
+                                     keepingExtractorVersion: String,
+                                     at timestamp: TimeInterval = Date().timeIntervalSince1970) -> Bool {
+        database.archiveSupersededKnowledgeCandidates(
+            sourceID: sourceID,
+            keepingExtractorVersion: keepingExtractorVersion,
+            now: timestamp)
+    }
+
     func units(statuses: Set<KnowledgeReviewStatus>? = nil,
                kinds: Set<KnowledgeKind>? = nil) -> [KnowledgeUnit] {
         database.knowledgeUnits().filter { unit in
             (statuses == nil || statuses!.contains(unit.reviewStatus))
                 && (kinds == nil || kinds!.contains(unit.kind))
         }
+    }
+
+    // Versioned, source-hash-bound drafts support restart without publishing partial knowledge.
+    func topicDraft(key: String) -> String? { database.kvGet("knowledge-topic:" + key) }
+    @discardableResult
+    func saveTopicDraft(_ value: String, key: String) -> Bool {
+        database.kvSet("knowledge-topic:" + key, value)
+    }
+
+    func trustedUnits() -> [KnowledgeUnit] {
+        database.knowledgeUnits().filter(\.isTrusted)
     }
 
     func evidence(unitID: String) -> [KnowledgeUnitSource] {

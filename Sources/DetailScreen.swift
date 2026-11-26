@@ -85,6 +85,10 @@ struct DetailScreen: View {
                 .strokeBorder(Theme.borderWhisper, lineWidth: 1))
 
             Spacer()
+            noteActionButton(store.knowledgeBackfillRunning ? "知识提炼中" : "提炼本场知识", icon: "sparkles") {
+                store.reextractKnowledgeMeeting(meetingID: m.id)
+            }
+            .disabled(store.knowledgeBackfillRunning)
 
             if noteTab == .markdown, let text = store.mdSummaries[m.id] {
                 noteActionButton("重新生成", icon: "arrow.clockwise") {

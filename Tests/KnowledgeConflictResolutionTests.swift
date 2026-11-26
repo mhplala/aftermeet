@@ -71,7 +71,7 @@ final class KnowledgeConflictResolutionTests: XCTestCase {
         XCTAssertEqual(fixture.store.feedback(
             targetType: "knowledge_unit", targetID: primary.id).map(\.action), [.relate])
         XCTAssertEqual(fixture.store.search(tokens: ["当前状态"])
-            .filter { $0.docType == "unit" }.count, 2)
+            .filter { $0.docType == "unit" }.count, 0)
     }
 
     func testContradictsPreservesBothValidityRanges() throws {

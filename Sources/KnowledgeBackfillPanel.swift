@@ -62,7 +62,11 @@ struct KnowledgeBackfillPanel: View {
                     store.startArchiveReviewScan()
                 }
             }
-            if progress.failed > 0 && !store.knowledgeBackfillRunning {
+            if store.knowledgePilotNeedsUpgrade && !store.knowledgeBackfillRunning {
+                secondaryButton("按话题重新提炼", icon: "arrow.triangle.2.circlepath") {
+                    store.restartKnowledgePilotWithCurrentExtractor()
+                }
+            } else if progress.failed > 0 && !store.knowledgeBackfillRunning {
                 secondaryButton("重试失败", icon: "arrow.clockwise") {
                     store.retryFailedKnowledgeJobs()
                 }
@@ -71,7 +75,7 @@ struct KnowledgeBackfillPanel: View {
                 secondaryButton("暂停", icon: "pause") {
                     store.pauseKnowledgeBackfill()
                 }
-            } else if progress.waiting > 0 {
+            } else if progress.waiting > 0 && !store.knowledgePilotNeedsUpgrade {
                 primaryButton("继续") { store.continueKnowledgeBackfill() }
             } else if progress.total == 0 {
                 primaryButton("试跑 10 场") { store.startKnowledgePilot() }
@@ -80,6 +84,7 @@ struct KnowledgeBackfillPanel: View {
     }
 
     private var progressText: String {
+        if store.knowledgePilotNeedsUpgrade { return "旧版按片段提炼。新版将结合整场讨论，重提炼最多 10 场非敏感会议；人工确认过的内容保留。" }
         if store.knowledgeBackfillRunning { return "正在逐个处理；点击暂停后会在当前来源完成时停下。" }
         if progress.failed > 0 { return "有失败任务待处理；已完成结果和断点都保留。" }
         if progress.waiting > 0 { return "队列已暂停，继续后会从持久断点恢复。" }

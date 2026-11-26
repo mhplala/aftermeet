@@ -68,15 +68,82 @@ enum KnowledgeEvidenceLevel: String, Codable, CaseIterable, Sendable {
     case inferred
 }
 
+enum KnowledgeClaimType: String, Codable, CaseIterable, Sendable {
+    case observedFact = "observed_fact"
+    case attributedOpinion = "attributed_opinion"
+    case forecast
+    case proposal
+    case decision
+    case commitment
+    case statusUpdate = "status_update"
+    case openQuestion = "open_question"
+}
+
+enum KnowledgeEpistemicStatus: String, Codable, CaseIterable, Sendable {
+    case certain
+    case soft
+    case tentative
+    case conditional
+}
+
+enum KnowledgeVerificationStatus: String, Codable, CaseIterable, Sendable {
+    case pending
+    case passed
+    case blocked
+}
+
+enum KnowledgeObservationBasis: String, Codable, CaseIterable, Sendable {
+    case meetingTime = "meeting_time"
+    case ingestionTime = "ingestion_time"
+    case unknown
+}
+
 enum KnowledgeConflictStatus: String, Codable, CaseIterable, Sendable {
     case none
     case pending
     case resolved
 }
 
+/// A topic-level understanding. Every substantive statement cites immutable source segments.
+struct KnowledgeContextStatement: Codable, Hashable, Sendable {
+    let text: String
+    let segmentIDs: [String]
+    enum CodingKeys: String, CodingKey { case text; case segmentIDs = "segment_ids" }
+}
+
+struct KnowledgeTopicContext: Codable, Hashable, Sendable {
+    enum Retention: String, Codable, Sendable { case durable, historicalDecision = "historical_decision", transient }
+    let topic: String
+    let background: KnowledgeContextStatement
+    let keyFacts: [KnowledgeContextStatement]
+    let rationale: [KnowledgeContextStatement]
+    let applicability: KnowledgeContextStatement?
+    let unknowns: [String]
+    let significance: String
+    let retention: Retention
+    enum CodingKeys: String, CodingKey {
+        case topic, background, rationale, applicability, unknowns, significance, retention
+        case keyFacts = "key_facts"
+    }
+    var searchText: String { ([topic, significance] + statements.map(\.text) + unknowns).joined(separator: " ") }
+    var statements: [KnowledgeContextStatement] {
+        [background] + keyFacts + rationale + (applicability.map { [$0] } ?? [])
+    }
+    static func from(payloadJSON: String) -> KnowledgeTopicContext? {
+        guard let data = payloadJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let context = object["topic_context"],
+              let json = try? JSONSerialization.data(withJSONObject: context) else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: json)
+    }
+}
+
 struct KnowledgeUnit: Identifiable, Codable, Hashable, Sendable {
     let id: String
     let kind: KnowledgeKind
+    let claimType: KnowledgeClaimType
+    let epistemicStatus: KnowledgeEpistemicStatus
+    let attributedTo: String?
     let canonicalText: String
     let subject: String?
     let predicate: String?
@@ -88,8 +155,13 @@ struct KnowledgeUnit: Identifiable, Codable, Hashable, Sendable {
     let validFrom: TimeInterval?
     let validTo: TimeInterval?
     let observedAt: TimeInterval
+    let observationBasis: KnowledgeObservationBasis
     let reviewStatus: KnowledgeReviewStatus
     let evidenceLevel: KnowledgeEvidenceLevel
+    let verificationStatus: KnowledgeVerificationStatus
+    let verificationReasonsJSON: String
+    let verifierVersion: String?
+    let verifiedAt: TimeInterval?
     let conflictStatus: KnowledgeConflictStatus
     let sensitivity: KnowledgeSensitivity
     let fingerprint: String
@@ -101,6 +173,96 @@ struct KnowledgeUnit: Identifiable, Codable, Hashable, Sendable {
     let payloadJSON: String
     let createdAt: TimeInterval
     let updatedAt: TimeInterval
+
+    init(id: String,
+         kind: KnowledgeKind,
+         claimType: KnowledgeClaimType = .observedFact,
+         epistemicStatus: KnowledgeEpistemicStatus = .certain,
+         attributedTo: String? = nil,
+         canonicalText: String,
+         subject: String?,
+         predicate: String?,
+         objectText: String?,
+         numericValue: Double?,
+         valueUnit: String?,
+         owner: String?,
+         dueText: String?,
+         validFrom: TimeInterval?,
+         validTo: TimeInterval?,
+         observedAt: TimeInterval,
+         observationBasis: KnowledgeObservationBasis = .meetingTime,
+         reviewStatus: KnowledgeReviewStatus,
+         evidenceLevel: KnowledgeEvidenceLevel,
+         verificationStatus: KnowledgeVerificationStatus = .pending,
+         verificationReasonsJSON: String = "[]",
+         verifierVersion: String? = nil,
+         verifiedAt: TimeInterval? = nil,
+         conflictStatus: KnowledgeConflictStatus,
+         sensitivity: KnowledgeSensitivity,
+         fingerprint: String,
+         revision: Int,
+         extractorVersion: String,
+         promptVersion: String,
+         schemaVersion: Int,
+         model: String,
+         payloadJSON: String,
+         createdAt: TimeInterval,
+         updatedAt: TimeInterval) {
+        self.id = id
+        self.kind = kind
+        self.claimType = claimType
+        self.epistemicStatus = epistemicStatus
+        self.attributedTo = attributedTo
+        self.canonicalText = canonicalText
+        self.subject = subject
+        self.predicate = predicate
+        self.objectText = objectText
+        self.numericValue = numericValue
+        self.valueUnit = valueUnit
+        self.owner = owner
+        self.dueText = dueText
+        self.validFrom = validFrom
+        self.validTo = validTo
+        self.observedAt = observedAt
+        self.observationBasis = observationBasis
+        self.reviewStatus = reviewStatus
+        self.evidenceLevel = evidenceLevel
+        self.verificationStatus = verificationStatus
+        self.verificationReasonsJSON = verificationReasonsJSON
+        self.verifierVersion = verifierVersion
+        self.verifiedAt = verifiedAt
+        self.conflictStatus = conflictStatus
+        self.sensitivity = sensitivity
+        self.fingerprint = fingerprint
+        self.revision = revision
+        self.extractorVersion = extractorVersion
+        self.promptVersion = promptVersion
+        self.schemaVersion = schemaVersion
+        self.model = model
+        self.payloadJSON = payloadJSON
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    var topicContext: KnowledgeTopicContext? { KnowledgeTopicContext.from(payloadJSON: payloadJSON) }
+
+    var searchContext: String {
+        var values = [subject, predicate, objectText].compactMap { $0 }
+        if let context = topicContext {
+            values += [context.topic, context.significance] + context.statements.map(\.text) + context.unknowns
+        }
+        return values.joined(separator: " ")
+    }
+
+    var isTrusted: Bool {
+        [.confirmed, .edited].contains(reviewStatus) && verificationStatus == .passed
+    }
+
+    var verificationReasons: [String] {
+        guard let data = verificationReasonsJSON.data(using: .utf8),
+              let reasons = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return reasons
+    }
 }
 
 enum KnowledgeEvidenceRole: String, Codable, CaseIterable, Sendable {
@@ -335,7 +497,7 @@ struct KnowledgeInboxItem: Identifiable, Equatable, Sendable {
 
     var sourceKinds: Set<KnowledgeSourceKind> { Set(sources.map(\.sourceKind)) }
     var meetingIDs: Set<String> { Set(sources.map(\.meetingID)) }
-    var isMissingOwner: Bool { unit.kind == .action && unit.owner == nil }
+    var isMissingOwner: Bool { unit.claimType == .commitment && unit.owner == nil }
 }
 
 struct KnowledgeUnitEdits: Equatable, Sendable {
@@ -349,6 +511,43 @@ struct KnowledgeUnitEdits: Equatable, Sendable {
     let dueText: String?
     let validFrom: TimeInterval?
     let validTo: TimeInterval?
+    let claimType: KnowledgeClaimType?
+    let epistemicStatus: KnowledgeEpistemicStatus?
+    let attributedTo: String?
+    let kind: KnowledgeKind?
+    let evidenceLevel: KnowledgeEvidenceLevel?
+
+    init(canonicalText: String,
+         subject: String?,
+         predicate: String?,
+         objectText: String?,
+         numericValue: Double?,
+         valueUnit: String?,
+         owner: String?,
+         dueText: String?,
+         validFrom: TimeInterval?,
+         validTo: TimeInterval?,
+         claimType: KnowledgeClaimType? = nil,
+         epistemicStatus: KnowledgeEpistemicStatus? = nil,
+         attributedTo: String? = nil,
+         kind: KnowledgeKind? = nil,
+         evidenceLevel: KnowledgeEvidenceLevel? = nil) {
+        self.canonicalText = canonicalText
+        self.subject = subject
+        self.predicate = predicate
+        self.objectText = objectText
+        self.numericValue = numericValue
+        self.valueUnit = valueUnit
+        self.owner = owner
+        self.dueText = dueText
+        self.validFrom = validFrom
+        self.validTo = validTo
+        self.claimType = claimType
+        self.epistemicStatus = epistemicStatus
+        self.attributedTo = attributedTo
+        self.kind = kind
+        self.evidenceLevel = evidenceLevel
+    }
 }
 
 struct KnowledgeUnitCommit: Equatable, Sendable {

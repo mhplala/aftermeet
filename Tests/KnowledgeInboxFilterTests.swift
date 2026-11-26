@@ -21,7 +21,11 @@ final class KnowledgeInboxFilterTests: XCTestCase {
                       sourceKind: KnowledgeSourceKind = .liveCloud,
                       evidenceLevel: KnowledgeEvidenceLevel = .direct) -> KnowledgeInboxItem {
         let unit = KnowledgeUnit(
-            id: id, kind: kind, canonicalText: id, subject: nil, predicate: nil,
+            id: id, kind: kind,
+            claimType: kind == .action ? .commitment
+                : kind == .decision ? .decision
+                : kind == .openQuestion ? .openQuestion : .observedFact,
+            canonicalText: id, subject: nil, predicate: nil,
             objectText: nil, numericValue: nil, valueUnit: nil, owner: owner,
             dueText: nil, validFrom: nil, validTo: nil, observedAt: observedAt,
             reviewStatus: status, evidenceLevel: evidenceLevel, conflictStatus: conflict,

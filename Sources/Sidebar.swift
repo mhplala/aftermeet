@@ -16,7 +16,7 @@ struct Sidebar: View {
                     active: store.screen == .home) { store.go(.home) }
 
             NavItem(icon: "books.vertical", label: "会议",
-                    active: store.screen == .library || store.screen == .detail) {
+                    active: store.screen == .library || store.screen == .detail || store.screen == .timeline) {
                 store.libraryRawTab = false
                 store.go(.library)
             }

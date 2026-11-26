@@ -50,6 +50,55 @@ final class DatabaseMigrationTests: XCTestCase {
         XCTAssertTrue(database.foreignKeysEnabled)
         XCTAssertNil(database.schemaMigrationError)
         XCTAssertEqual(database.schemaVersion, DB.currentSchemaVersion)
+        XCTAssertEqual(try scalar("SELECT COUNT(*) FROM pragma_table_info('knowledge_units') WHERE name='claim_type'", at: url), "1")
+        XCTAssertEqual(try scalar("SELECT COUNT(*) FROM pragma_table_info('knowledge_units') WHERE name='verification_status'", at: url), "1")
+    }
+
+    func testVerifierV2MigrationInvalidatesMachinePassedCandidates() throws {
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        do {
+            let database = DB(databaseURL: url)
+            XCTAssertEqual(database.schemaVersion, DB.currentSchemaVersion)
+        }
+        try execute("""
+            INSERT INTO knowledge_units(
+                id,kind,canonical_text,observed_at,review_status,evidence_level,
+                fingerprint,extractor_version,prompt_version,schema_version,model,
+                created_at,updated_at,verification_status,verification_reasons_json,verifier_version
+            ) VALUES(
+                'legacy-machine-pass','fact','虚构候选',10,'candidate','direct',
+                'fingerprint','knowledge-extractor-v2','prompt-v2',2,'fixture',
+                10,10,'passed','[]','knowledge-entailment-v1+knowledge-qualification-v2'
+            );
+            INSERT INTO source_documents(
+                id,meeting_id,source_kind,full_text,content_hash,created_at,updated_at
+            ) VALUES('legacy-source','legacy-meeting','archive','已确认事实','source-hash',10,10);
+            INSERT INTO source_segments(
+                id,source_id,meeting_id,ordinal,char_start,char_end,text,content_hash,created_at,updated_at
+            ) VALUES('legacy-segment','legacy-source','legacy-meeting',0,0,5,'已确认事实','segment-hash',10,10);
+            INSERT INTO knowledge_units(
+                id,kind,canonical_text,observed_at,review_status,evidence_level,
+                fingerprint,extractor_version,prompt_version,schema_version,model,
+                created_at,updated_at,verification_status,verification_reasons_json
+            ) VALUES(
+                'legacy-human-confirmed','fact','已确认事实',10,'confirmed','direct',
+                'confirmed-fingerprint','knowledge-extractor-v1','prompt-v1',1,'fixture',
+                10,10,'pending','[]'
+            );
+            INSERT INTO unit_sources(unit_id,segment_id,evidence_role,quote,weight,verified)
+            VALUES('legacy-human-confirmed','legacy-segment','support','已确认事实',1,1);
+            PRAGMA user_version = 11;
+            """, at: url)
+
+        let migrated = DB(databaseURL: url)
+
+        XCTAssertEqual(migrated.schemaVersion, 12)
+        XCTAssertEqual(try scalar("SELECT verification_status FROM knowledge_units WHERE id='legacy-machine-pass'", at: url), "blocked")
+        XCTAssertEqual(try scalar("SELECT verification_reasons_json FROM knowledge_units WHERE id='legacy-machine-pass'", at: url), "[\"requires_verifier_v2\"]")
+        XCTAssertEqual(try scalar("SELECT verification_status FROM knowledge_units WHERE id='legacy-human-confirmed'", at: url), "passed")
+        XCTAssertEqual(try scalar("SELECT verifier_version FROM knowledge_units WHERE id='legacy-human-confirmed'", at: url), "legacy-human-review")
+        XCTAssertEqual(try scalar("SELECT COUNT(*) FROM knowledge_fts WHERE doc_type='unit' AND doc_id='legacy-human-confirmed'", at: url), "1")
     }
 
     func testMigrationIsIdempotentAcrossReopen() throws {

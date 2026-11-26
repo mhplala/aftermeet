@@ -26,14 +26,21 @@ final class KnowledgeStoreTests: XCTestCase {
             metadataJSON: "{}", createdAt: 10, updatedAt: 10)
     }
 
-    private func unit(id: String, status: KnowledgeReviewStatus = .candidate) -> KnowledgeUnit {
+    private func unit(id: String,
+                      status: KnowledgeReviewStatus = .candidate,
+                      extractorVersion: String = "extract-v1") -> KnowledgeUnit {
         KnowledgeUnit(
-            id: id, kind: .decision, canonicalText: "继续试验", subject: "松果计划",
+            id: id, kind: .decision, claimType: .decision,
+            canonicalText: "继续试验", subject: "松果计划",
             predicate: "状态", objectText: "继续", numericValue: nil, valueUnit: nil,
             owner: nil, dueText: nil, validFrom: 10, validTo: nil, observedAt: 10,
-            reviewStatus: status, evidenceLevel: .direct, conflictStatus: .none,
+            reviewStatus: status, evidenceLevel: .direct,
+            verificationStatus: status == .candidate ? .pending : .passed,
+            verifierVersion: status == .candidate ? nil : "fixture",
+            verifiedAt: status == .candidate ? nil : 10,
+            conflictStatus: .none,
             sensitivity: .normal, fingerprint: "fp-" + id, revision: 1,
-            extractorVersion: "extract-v1", promptVersion: "prompt-v1", schemaVersion: 1,
+            extractorVersion: extractorVersion, promptVersion: "prompt-v1", schemaVersion: 1,
             model: "fixture", payloadJSON: "{}", createdAt: 10, updatedAt: 10)
     }
 
@@ -56,6 +63,65 @@ final class KnowledgeStoreTests: XCTestCase {
         XCTAssertTrue(store.sources(meetingID: "meeting-1").isEmpty)
         XCTAssertTrue(store.segments(sourceID: document.id).isEmpty)
         XCTAssertTrue(store.search(tokens: ["关键指标"]).isEmpty)
+    }
+
+    func testCompletedReextractArchivesOnlyOlderCandidates() throws {
+        let (store, directory) = makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = source()
+        let firstSegment = segment()
+        XCTAssertTrue(store.saveSource(document, segments: [firstSegment], meetingTitle: "松果计划评审"))
+        let old = unit(id: "old-candidate", extractorVersion: "extract-v1")
+        let current = unit(id: "current-candidate", extractorVersion: "extract-v2")
+        for item in [old, current] {
+            XCTAssertTrue(store.saveUnit(
+                item,
+                evidence: [KnowledgeUnitSource(
+                    unitID: item.id,
+                    segmentID: firstSegment.id,
+                    evidenceRole: .support,
+                    quote: "关键指标增长",
+                    weight: 1,
+                    verified: false)],
+                projectLinks: [],
+                meetingID: document.meetingID,
+                meetingTitle: "松果计划评审"))
+        }
+
+        XCTAssertTrue(store.archiveSupersededCandidates(
+            sourceID: document.id,
+            keepingExtractorVersion: "extract-v2",
+            at: 20))
+
+        XCTAssertEqual(store.units().first { $0.id == old.id }?.reviewStatus, .rejected)
+        XCTAssertEqual(store.units().first { $0.id == current.id }?.reviewStatus, .candidate)
+        XCTAssertTrue(store.units().first { $0.id == old.id }?
+            .verificationReasons.contains("superseded_extraction") == true)
+        XCTAssertEqual(store.feedback(targetType: "knowledge_unit", targetID: old.id).map(\.actor), ["system"])
+    }
+
+    func testCandidateIsExcludedFromTrustedSearch() {
+        let (store, directory) = makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = source()
+        let firstSegment = segment()
+        XCTAssertTrue(store.saveSource(document, segments: [firstSegment], meetingTitle: "松果计划评审"))
+        let candidate = unit(id: "candidate-unit")
+        XCTAssertTrue(store.saveUnit(
+            candidate,
+            evidence: [KnowledgeUnitSource(
+                unitID: candidate.id,
+                segmentID: firstSegment.id,
+                evidenceRole: .support,
+                quote: "关键指标增长",
+                weight: 1,
+                verified: false)],
+            projectLinks: [],
+            meetingID: document.meetingID,
+            meetingTitle: "松果计划评审"))
+
+        XCTAssertTrue(store.search(tokens: ["继续试验"]).isEmpty)
+        XCTAssertTrue(store.trustedUnits().isEmpty)
     }
 
     func testUnitSaveIsAtomicAndLoadsEvidenceProjectAndFTS() throws {
@@ -165,6 +231,38 @@ final class KnowledgeStoreTests: XCTestCase {
         XCTAssertEqual(diagnostics.missingFTSRows, 0)
         XCTAssertEqual(diagnostics.orphanFTSRows, 1)
         XCTAssertFalse(diagnostics.isClean)
+    }
+
+    func testDeletingLastSupportingSourceDowngradesTrustedUnit() throws {
+        let (store, directory) = makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = source()
+        let firstSegment = segment()
+        XCTAssertTrue(store.saveSource(document, segments: [firstSegment], meetingTitle: "松果计划评审"))
+        let trusted = unit(id: "trusted-unit", status: .confirmed)
+        XCTAssertTrue(store.saveUnit(
+            trusted,
+            evidence: [KnowledgeUnitSource(
+                unitID: trusted.id,
+                segmentID: firstSegment.id,
+                evidenceRole: .support,
+                quote: "关键指标增长",
+                weight: 1,
+                verified: true)],
+            projectLinks: [],
+            meetingID: document.meetingID,
+            meetingTitle: "松果计划评审"))
+        XCTAssertEqual(store.trustedUnits().map(\.id), [trusted.id])
+        XCTAssertFalse(store.search(tokens: ["继续试验"]).isEmpty)
+
+        XCTAssertTrue(store.deleteSource(id: document.id))
+
+        let downgraded = try XCTUnwrap(store.units().first { $0.id == trusted.id })
+        XCTAssertEqual(downgraded.reviewStatus, .candidate)
+        XCTAssertEqual(downgraded.verificationStatus, .blocked)
+        XCTAssertTrue(downgraded.verificationReasons.contains("missing_support"))
+        XCTAssertTrue(store.trustedUnits().isEmpty)
+        XCTAssertTrue(store.search(tokens: ["继续试验"]).isEmpty)
     }
 
     func testJobEnqueueUsesStableIdentityAndStateUpdates() throws {

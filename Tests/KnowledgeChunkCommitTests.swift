@@ -46,7 +46,8 @@ final class KnowledgeChunkCommitTests: XCTestCase {
             quote: "继续小流量试验",
             role: .support)
         let candidate = KnowledgeExtractionCandidate(
-            clientID: clientID, kind: .decision, canonicalText: canonicalText,
+            clientID: clientID, kind: .decision, claimType: .decision,
+            canonicalText: canonicalText,
             subject: "松果计划", predicate: "试验状态", objectText: "继续",
             numericValue: nil, valueUnit: nil, owner: nil, dueText: nil,
             validFrom: nil, validTo: nil, evidenceLevel: .direct,
@@ -76,6 +77,9 @@ final class KnowledgeChunkCommitTests: XCTestCase {
         KnowledgeUnit(
             id: base.id,
             kind: base.kind,
+            claimType: base.claimType,
+            epistemicStatus: base.epistemicStatus,
+            attributedTo: base.attributedTo,
             canonicalText: canonicalText ?? base.canonicalText,
             subject: base.subject,
             predicate: base.predicate,
@@ -87,8 +91,13 @@ final class KnowledgeChunkCommitTests: XCTestCase {
             validFrom: base.validFrom,
             validTo: base.validTo,
             observedAt: base.observedAt,
+            observationBasis: base.observationBasis,
             reviewStatus: status,
             evidenceLevel: base.evidenceLevel,
+            verificationStatus: [.confirmed, .edited].contains(status) ? .passed : base.verificationStatus,
+            verificationReasonsJSON: "[]",
+            verifierVersion: "fixture",
+            verifiedAt: 12,
             conflictStatus: base.conflictStatus,
             sensitivity: base.sensitivity,
             fingerprint: base.fingerprint,
@@ -123,7 +132,7 @@ final class KnowledgeChunkCommitTests: XCTestCase {
         XCTAssertEqual(first.projectLinks[0].reviewStatus, .candidate)
     }
 
-    func testChunkCommitWritesUnitsEdgesFTSAndCursorInOneTransaction() throws {
+    func testChunkCommitWritesCandidateEdgesWithoutTrustedFTSAndAdvancesCursor() throws {
         let (store, directory) = makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }
         let prepared = prepare(store: store)
@@ -137,9 +146,7 @@ final class KnowledgeChunkCommitTests: XCTestCase {
         XCTAssertEqual(store.units(), [commit.unit])
         XCTAssertEqual(store.evidence(unitID: commit.unit.id), commit.evidence)
         XCTAssertEqual(store.projectLinks(unitID: commit.unit.id), commit.projectLinks)
-        XCTAssertEqual(store.search(tokens: ["决定继续"]), [
-            DB.KnowledgeFTSHit(docType: "unit", docID: commit.unit.id)
-        ])
+        XCTAssertTrue(store.search(tokens: ["决定继续"]).isEmpty)
         let job = try XCTUnwrap(store.jobs().first { $0.id == prepared.job.id })
         XCTAssertEqual(job.state, .running)
         XCTAssertEqual(job.cursor, 1)
